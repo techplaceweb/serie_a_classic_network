@@ -10,6 +10,11 @@ let sessionUser = null;
 let currentAdminView = "dashboard";
 let currentChatUserId = null;
 let activeFrontCategory = null;
+let messagesChannel = null;
+let activeChatRole = null;
+let activeChatUserId = null;
+let notificationAudioContext = null;
+let notificationSoundUnlocked = false;
 
 const $ = (id) => document.getElementById(id);
 const clone = (x) => JSON.parse(JSON.stringify(x));
@@ -31,6 +36,180 @@ function usernameToTechnicalEmail(username) {
   return `${normalizeUsername(username)}@${USER_EMAIL_DOMAIN}`;
 }
 
+
+
+function unlockNotificationSound() {
+  if (notificationSoundUnlocked) return;
+
+  try {
+    const AudioContextClass =
+      window.AudioContext || window.webkitAudioContext;
+
+    if (!AudioContextClass) return;
+
+    notificationAudioContext ||= new AudioContextClass();
+
+    if (notificationAudioContext.state === "suspended") {
+      notificationAudioContext.resume();
+    }
+
+    notificationSoundUnlocked = true;
+  } catch (error) {
+    console.warn("Audio notifiche non disponibile:", error);
+  }
+}
+
+function playMessageSound() {
+  if (!notificationSoundUnlocked || !notificationAudioContext) return;
+
+  try {
+    const now = notificationAudioContext.currentTime;
+    const gain = notificationAudioContext.createGain();
+
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.12, now + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.35);
+    gain.connect(notificationAudioContext.destination);
+
+    [740, 980].forEach((frequency, index) => {
+      const oscillator = notificationAudioContext.createOscillator();
+      oscillator.type = "sine";
+      oscillator.frequency.setValueAtTime(
+        frequency,
+        now + index * 0.09
+      );
+      oscillator.connect(gain);
+      oscillator.start(now + index * 0.09);
+      oscillator.stop(now + 0.20 + index * 0.09);
+    });
+  } catch (error) {
+    console.warn("Impossibile riprodurre il suono:", error);
+  }
+}
+
+function upsertMessage(message) {
+  const index = state.messages.findIndex((item) => item.id === message.id);
+
+  if (index >= 0) {
+    state.messages[index] = message;
+  } else {
+    state.messages.push(message);
+  }
+
+  state.messages.sort(
+    (a, b) => new Date(a.created_at) - new Date(b.created_at)
+  );
+}
+
+function conversationIsOpen(userId) {
+  return Boolean(
+    activeChatRole &&
+    activeChatUserId === userId &&
+    $("chatRoot")?.innerHTML
+  );
+}
+
+async function refreshOpenChat(userId) {
+  if (!conversationIsOpen(userId)) return;
+
+  const draft = $("chatInput")?.value || "";
+  await openChat(activeChatRole, userId, {
+    preserveDraft: draft,
+    markRead: true
+  });
+}
+
+async function handleRealtimeMessageChange(payload) {
+  if (!sessionUser) return;
+
+  const eventType = payload.eventType;
+  const newMessage = payload.new;
+  const oldMessage = payload.old;
+
+  if (eventType === "DELETE") {
+    const deletedId = oldMessage?.id;
+    const deletedUserId = oldMessage?.user_id;
+
+    if (deletedId) {
+      state.messages = state.messages.filter(
+        (message) => message.id !== deletedId
+      );
+    }
+
+    renderUnread();
+
+    if (deletedUserId) {
+      await refreshOpenChat(deletedUserId);
+    }
+
+    return;
+  }
+
+  if (!newMessage?.id) return;
+
+  upsertMessage(newMessage);
+
+  const isIncoming =
+    newMessage.sender_id !== sessionUser.id &&
+    newMessage.recipient_role === sessionUser.role;
+
+  if (isIncoming && eventType === "INSERT") {
+    playMessageSound();
+    toast("Nuovo messaggio ricevuto");
+  }
+
+  renderUnread();
+
+  if (conversationIsOpen(newMessage.user_id)) {
+    await refreshOpenChat(newMessage.user_id);
+  }
+}
+
+function startMessagesRealtime() {
+  if (!sessionUser) return;
+
+  if (messagesChannel) {
+    db.removeChannel(messagesChannel);
+    messagesChannel = null;
+  }
+
+  messagesChannel = db
+    .channel(`messages-${sessionUser.id}-${Date.now()}`)
+    .on(
+      "postgres_changes",
+      {
+        event: "*",
+        schema: "public",
+        table: "messages"
+      },
+      handleRealtimeMessageChange
+    )
+    .subscribe((status, error) => {
+      if (error) {
+        console.error("Errore Supabase Realtime:", error);
+      }
+
+      if (status === "CHANNEL_ERROR") {
+        console.error(
+          "Canale messaggi non disponibile. Controlla Realtime per la tabella messages."
+        );
+      }
+    });
+}
+
+function stopMessagesRealtime() {
+  if (messagesChannel) {
+    db.removeChannel(messagesChannel);
+    messagesChannel = null;
+  }
+}
+
+document.addEventListener("pointerdown", unlockNotificationSound, {
+  once: true
+});
+document.addEventListener("keydown", unlockNotificationSound, {
+  once: true
+});
 
 function toast(msg) {
   const t = $("toast");
@@ -161,6 +340,7 @@ async function attemptLogin() {
 }
 
 async function logout() {
+  stopMessagesRealtime();
   await db.auth.signOut();
   sessionUser = null;
   location.reload();
@@ -174,6 +354,7 @@ function showAdmin() {
   hideAll();
   $("adminShell").classList.remove("hidden");
   renderAll();
+  startMessagesRealtime();
 }
 function showFrontend(user) {
   hideAll();
@@ -182,6 +363,7 @@ function showFrontend(user) {
   $("frontUserBadge").textContent = `${user.username} · ${user.plan}`;
   renderFrontend();
   showFrontHome();
+  startMessagesRealtime();
 }
 function showMaintenance() {
   hideAll();
@@ -556,24 +738,331 @@ window.selectFrontCategory = (id) => { activeFrontCategory = id; document.queryS
 window.showCategory = (id) => { const cat = state.categories.find((c) => c.id === id), arr = availableContents().filter((c) => c.category_ids?.includes(id)); $("frontMain").innerHTML = `<div class="section-head"><div><h1>${esc(cat?.name || "Categoria")}</h1><div class="subtle">Contenuti ordinati dal più recente.</div></div></div>${arr.length ? frontCards(arr) : '<div class="empty">Nessun contenuto in questa categoria.</div>'}`; };
 window.openFrontContent = (id) => { const c = availableContents().find((x) => x.id === id); if (!c) return; let safeUrl = normalizeVideoUrl(c.url); if (safeUrl.includes("youtube.com/embed/")) safeUrl = safeUrl.replace("youtube.com/embed/", "youtube-nocookie.com/embed/"); let embed = !safeUrl ? '<div class="empty">URL video non disponibile.</div>' : /\.mp4($|\?)/i.test(safeUrl) ? `<video src="${esc(safeUrl)}" controls playsinline></video>` : `<iframe src="${esc(safeUrl + (safeUrl.includes("?") ? "&" : "?") + "rel=0&modestbranding=1&iv_load_policy=3&playsinline=1")}" title="${esc(c.title)}" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>`; $("frontMain").innerHTML = `<button class="icon-btn" onclick="showFrontHome()">← Indietro</button><div class="video-head"><h1>${esc(c.title)}</h1><p class="subtle">${esc(c.description || "")}</p></div><div class="video-view">${embed}</div>`; };
 
-function messagesFor(userId) { return state.messages.filter((m) => m.user_id === userId).sort((a, b) => new Date(a.created_at) - new Date(b.created_at)); }
-function renderUnread() {
-  if (sessionUser?.role === "admin") { const n = state.messages.filter((m) => m.recipient_role === "admin" && !m.read).length; $("adminUnread").textContent = n; $("adminUnread").classList.toggle("hidden", !n); }
-  if (sessionUser?.role === "user") { const n = state.messages.filter((m) => m.user_id === sessionUser.id && m.recipient_role === "user" && !m.read).length; $("userUnread").textContent = n; $("userUnread").classList.toggle("hidden", !n); }
+function messagesFor(userId) {
+  return state.messages
+    .filter((message) => message.user_id === userId)
+    .sort(
+      (a, b) => new Date(a.created_at) - new Date(b.created_at)
+    );
 }
-async function loadUserMessages() { const { data, error } = await db.from("messages").select("*").eq("user_id", sessionUser.id).order("created_at"); if (!error) state.messages = data || []; }
-window.toggleAdminChat = () => { if (!state.users.length) return toast("Nessun utente disponibile"); currentChatUserId ||= state.users[0].id; openChat("admin", currentChatUserId); };
-window.openAdminChatFor = (id) => { currentChatUserId = id; openChat("admin", id); };
-window.toggleUserChat = async () => { await loadUserMessages(); openChat("user", sessionUser.id); };
-async function openChat(role, userId) {
-  const unread = messagesFor(userId).filter((m) => m.recipient_role === role && !m.read);
-  if (unread.length) await db.from("messages").update({ read: true }).in("id", unread.map((m) => m.id));
-  if (role === "admin") { const { data } = await db.from("messages").select("*").order("created_at"); state.messages = data || []; } else await loadUserMessages();
-  const selector = role === "admin" ? `<select id="chatUserSelect">${state.users.map((u) => `<option value="${u.id}" ${u.id === userId ? "selected" : ""}>${esc(u.username)}</option>`).join("")}</select>` : "<b>Contatta Admin</b>";
-  $("chatRoot").innerHTML = `<div class="chat-panel"><div class="chat-head">${selector}<button class="icon-btn" id="chatClose">✕</button></div><div id="chatBody" class="chat-body">${messagesFor(userId).map((m) => `<div class="bubble ${m.sender_id === sessionUser.id ? "me" : ""}">${esc(m.text)}<div class="subtle" style="font-size:11px;margin-top:5px">${new Date(m.created_at).toLocaleString("it-IT")}</div></div>`).join("") || '<div class="empty">Nessun messaggio.</div>'}</div><div class="chat-compose"><input id="chatInput" placeholder="Scrivi un messaggio..."><button class="btn" id="chatSend">Invia</button></div></div>`;
-  $("chatClose").onclick = () => $("chatRoot").innerHTML = "";
-  if (role === "admin") $("chatUserSelect").onchange = () => openChat("admin", $("chatUserSelect").value);
-  $("chatSend").onclick = async () => { const text = $("chatInput").value.trim(); if (!text) return; const { error } = await db.from("messages").insert({ user_id: userId, sender_id: sessionUser.id, recipient_role: role === "admin" ? "user" : "admin", text }); if (error) return toast(error.message); openChat(role, userId); };
+
+function renderUnread() {
+  if (sessionUser?.role === "admin") {
+    const count = state.messages.filter(
+      (message) =>
+        message.recipient_role === "admin" &&
+        !message.read
+    ).length;
+
+    $("adminUnread").textContent = count;
+    $("adminUnread").classList.toggle("hidden", !count);
+  }
+
+  if (sessionUser?.role === "user") {
+    const count = state.messages.filter(
+      (message) =>
+        message.user_id === sessionUser.id &&
+        message.recipient_role === "user" &&
+        !message.read
+    ).length;
+
+    $("userUnread").textContent = count;
+    $("userUnread").classList.toggle("hidden", !count);
+  }
+}
+
+async function loadUserMessages() {
+  const { data, error } = await db
+    .from("messages")
+    .select("*")
+    .eq("user_id", sessionUser.id)
+    .order("created_at");
+
+  if (error) {
+    console.error("Errore caricamento messaggi:", error);
+    return;
+  }
+
+  state.messages = data || [];
+  renderUnread();
+}
+
+async function loadAdminMessages() {
+  const { data, error } = await db
+    .from("messages")
+    .select("*")
+    .order("created_at");
+
+  if (error) {
+    console.error("Errore caricamento messaggi admin:", error);
+    return;
+  }
+
+  state.messages = data || [];
+  renderUnread();
+}
+
+async function markConversationAsRead(role, userId) {
+  const unread = messagesFor(userId).filter(
+    (message) =>
+      message.recipient_role === role &&
+      !message.read
+  );
+
+  if (!unread.length) return;
+
+  const { error } = await db.rpc("mark_messages_read", {
+    p_user_id: userId
+  });
+
+  if (error) {
+    console.error("Errore conferma lettura:", error);
+  }
+}
+
+function messageStatusHtml(message, role) {
+  const sentByCurrentUser = message.sender_id === sessionUser.id;
+
+  if (
+    role !== "admin" ||
+    !sentByCurrentUser ||
+    message.recipient_role !== "user"
+  ) {
+    return "";
+  }
+
+  return message.read
+    ? '<span class="message-status read">✓✓ Visualizzato</span>'
+    : '<span class="message-status">✓ Inviato</span>';
+}
+
+function deleteButtonHtml(message, role) {
+  const canDelete =
+    role === "admin" &&
+    message.sender_id === sessionUser.id &&
+    message.recipient_role === "user" &&
+    !message.read;
+
+  if (!canDelete) return "";
+
+  return `
+    <button
+      class="message-delete"
+      type="button"
+      onclick="deleteUnreadMessage('${message.id}')"
+      title="Cancella prima della visualizzazione"
+    >
+      Elimina
+    </button>
+  `;
+}
+
+function renderMessageBubble(message, role) {
+  const mine = message.sender_id === sessionUser.id;
+  const body = esc(message.text).replace(/\n/g, "<br>");
+
+  return `
+    <div class="bubble ${mine ? "me" : ""}" data-message-id="${message.id}">
+      <div class="message-text">${body}</div>
+      <div class="message-meta">
+        <span>
+          ${new Date(message.created_at).toLocaleString("it-IT")}
+        </span>
+        ${messageStatusHtml(message, role)}
+        ${deleteButtonHtml(message, role)}
+      </div>
+    </div>
+  `;
+}
+
+window.toggleAdminChat = () => {
+  if (!state.users.length) {
+    return toast("Nessun utente disponibile");
+  }
+
+  currentChatUserId ||= state.users[0].id;
+  openChat("admin", currentChatUserId);
+};
+
+window.openAdminChatFor = (id) => {
+  currentChatUserId = id;
+  openChat("admin", id);
+};
+
+window.toggleUserChat = async () => {
+  await loadUserMessages();
+  openChat("user", sessionUser.id);
+};
+
+window.deleteUnreadMessage = async (messageId) => {
+  if (sessionUser?.role !== "admin") return;
+
+  const message = state.messages.find(
+    (item) => item.id === messageId
+  );
+
+  if (
+    !message ||
+    message.read ||
+    message.sender_id !== sessionUser.id ||
+    message.recipient_role !== "user"
+  ) {
+    return toast(
+      "Il messaggio è già stato visualizzato o non può essere eliminato."
+    );
+  }
+
+  if (!confirm("Cancellare questo messaggio prima che venga visualizzato?")) {
+    return;
+  }
+
+  const { error } = await db
+    .from("messages")
+    .delete()
+    .eq("id", messageId)
+    .eq("read", false);
+
+  if (error) {
+    console.error("Errore eliminazione messaggio:", error);
+    return toast(error.message);
+  }
+
+  state.messages = state.messages.filter(
+    (item) => item.id !== messageId
+  );
+
+  await refreshOpenChat(message.user_id);
+  renderUnread();
+  toast("Messaggio eliminato.");
+};
+
+async function openChat(
+  role,
+  userId,
+  options = {}
+) {
+  activeChatRole = role;
+  activeChatUserId = userId;
+  currentChatUserId = userId;
+
+  if (role === "admin") {
+    await loadAdminMessages();
+  } else {
+    await loadUserMessages();
+  }
+
+  if (options.markRead !== false) {
+    await markConversationAsRead(role, userId);
+
+    if (role === "admin") {
+      await loadAdminMessages();
+    } else {
+      await loadUserMessages();
+    }
+  }
+
+  const selector =
+    role === "admin"
+      ? `
+        <select id="chatUserSelect">
+          ${state.users
+            .map(
+              (user) => `
+                <option
+                  value="${user.id}"
+                  ${user.id === userId ? "selected" : ""}
+                >
+                  ${esc(user.username)}
+                </option>
+              `
+            )
+            .join("")}
+        </select>
+      `
+      : "<b>Contatta Admin</b>";
+
+  const messagesHtml =
+    messagesFor(userId)
+      .map((message) => renderMessageBubble(message, role))
+      .join("") ||
+    '<div class="empty">Nessun messaggio.</div>';
+
+  $("chatRoot").innerHTML = `
+    <div class="chat-panel">
+      <div class="chat-head">
+        ${selector}
+        <button class="icon-btn" id="chatClose">✕</button>
+      </div>
+
+      <div id="chatBody" class="chat-body">
+        ${messagesHtml}
+      </div>
+
+      <div class="chat-compose">
+        <textarea
+          id="chatInput"
+          placeholder="Scrivi un messaggio..."
+          rows="2"
+        ></textarea>
+        <button class="btn" id="chatSend">Invia</button>
+      </div>
+    </div>
+  `;
+
+  const chatBody = $("chatBody");
+  chatBody.scrollTop = chatBody.scrollHeight;
+
+  const chatInput = $("chatInput");
+  chatInput.value = options.preserveDraft || "";
+
+  $("chatClose").onclick = () => {
+    activeChatRole = null;
+    activeChatUserId = null;
+    $("chatRoot").innerHTML = "";
+  };
+
+  if (role === "admin") {
+    $("chatUserSelect").onchange = () =>
+      openChat("admin", $("chatUserSelect").value);
+  }
+
+  // Il tasto Invio crea una nuova riga.
+  // Il messaggio viene inviato esclusivamente cliccando il pulsante.
+  $("chatSend").onclick = async () => {
+    const text = chatInput.value.trim();
+
+    if (!text) return;
+
+    const sendButton = $("chatSend");
+    sendButton.disabled = true;
+    sendButton.textContent = "Invio...";
+
+    const { data, error } = await db
+      .from("messages")
+      .insert({
+        user_id: userId,
+        sender_id: sessionUser.id,
+        recipient_role: role === "admin" ? "user" : "admin",
+        text
+      })
+      .select()
+      .single();
+
+    if (error) {
+      sendButton.disabled = false;
+      sendButton.textContent = "Invia";
+      console.error("Errore invio messaggio:", error);
+      return toast(error.message);
+    }
+
+    upsertMessage(data);
+    chatInput.value = "";
+    await openChat(role, userId, {
+      preserveDraft: "",
+      markRead: false
+    });
+  };
+
   renderUnread();
 }
 

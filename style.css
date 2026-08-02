@@ -101,3 +101,44 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:13px 10p
 .content-row{grid-template-columns:56px minmax(0,1fr) 92px auto;padding:7px 9px;gap:8px;border-radius:10px}.content-row .mini-thumb{width:56px;border-radius:6px}.content-row .title-wrap b{font-size:13px}.content-row .title-wrap .subtle{font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.content-row .icon-btn{padding:7px 8px;font-size:11px}
 .video-head{margin:18px 0 14px}.video-head h1{margin:0 0 8px}.video-head p{margin:0}
 @media(max-width:620px){.content-row{grid-template-columns:48px minmax(0,1fr)}.content-row .mini-thumb{width:48px}.content-row>.status-col,.content-row>.row-actions{grid-column:2}.sidebar .brand img{width:40px;height:40px}.sidebar .brand span{display:none}}
+
+
+/* CHAT REALTIME */
+.chat-compose{
+  align-items:flex-end;
+}
+.chat-compose textarea{
+  min-height:46px;
+  max-height:140px;
+  resize:vertical;
+  line-height:1.4;
+}
+.message-text{
+  overflow-wrap:anywhere;
+}
+.message-meta{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  flex-wrap:wrap;
+  margin-top:6px;
+  color:var(--muted);
+  font-size:11px;
+}
+.message-status{
+  font-weight:700;
+}
+.message-status.read{
+  color:#9fd8ba;
+}
+.message-delete{
+  border:0;
+  background:transparent;
+  color:#ffb2b2;
+  padding:0;
+  font-size:11px;
+  text-decoration:underline;
+}
+.message-delete:hover{
+  color:#ffd2d2;
+}
