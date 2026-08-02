@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<meta name="theme-color" content="#060b08">
+<title>SERIE A CLASSIC Network</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="loginScreen" class="login-screen">
+  <div class="login-card">
+    <div class="brand"><img src="logo.png" alt="Serie A Classic"><span>Network</span></div>
+    <div class="tricolore"><i></i><i></i><i></i></div>
+    <div class="field"><label>Username</label><input id="loginUser" autocomplete="username" autocapitalize="none" spellcheck="false" required></div>
+    <div class="field"><label>Password</label><input id="loginPass" type="password" autocomplete="current-password"></div>
+    <button id="loginBtn" class="btn" style="width:100%;margin-top:18px">ACCEDI</button>
+    <div id="loginError" class="login-error hidden">Credenziali non valide o account non attivo.</div>
+  </div>
+</div>
+
+<div id="maintenanceScreen" class="maintenance-screen hidden"><div class="notice-card"><div class="brand"><img src="logo.png" alt="Serie A Classic"><span>Network</span></div><h1>Piattaforma in manutenzione</h1><p class="subtle">Riprova più tardi o contatta l’admin.</p><a id="maintenanceMail" class="btn" style="display:inline-block;text-decoration:none">Contatta l’admin</a></div></div>
+<div id="expiredScreen" class="expired-screen hidden"><div class="notice-card"><h1>Il tuo periodo di prova è scaduto</h1><p class="subtle">Per continuare a goderti l’esperienza nostalgica, diventa abbonato.</p><a id="expiredContact" class="btn" style="display:inline-block;text-decoration:none">Diventa Abbonato</a><button class="btn secondary" style="margin-left:8px" onclick="logout()">Esci</button></div></div>
+
+<div id="adminShell" class="shell hidden">
+<aside id="sidebar" class="sidebar">
+  <div class="brand"><img src="logo.png" alt="Serie A Classic"><span>Network</span></div><div class="tricolore"><i></i><i></i><i></i></div>
+  <nav class="nav">
+    <button data-view="dashboard" class="active">⌂ Dashboard</button>
+    <button data-view="users">♙ Utenti</button>
+    <button data-view="content">▦ Contenuti</button>
+    <button data-view="settings">⚙ Impostazioni</button>
+  </nav>
+  <div class="sidebar-bottom"><button class="btn secondary" onclick="logout()">Esci</button></div>
+</aside>
+<main class="main">
+  <div class="topbar">
+    <div style="display:flex;gap:12px;align-items:center"><button id="mobileToggle" class="icon-btn mobile-toggle">☰</button><div><h1 id="pageTitle">Dashboard</h1><div id="pageSubtitle" class="subtle">Centro di controllo</div></div></div>
+    <div class="topbar-actions"><button class="icon-btn" onclick="toggleAdminChat()">💬 Contatta utenti <span id="adminUnread" class="badge red hidden">0</span></button><span class="badge gold">Admin</span></div>
+  </div>
+  <section id="view-dashboard">
+    <div class="card" style="margin-bottom:18px"><h2 style="margin:0 0 6px">Buongiorno Admin,</h2><div class="subtle">questo è il tuo centro di controllo.</div></div>
+    <div class="grid stats"><div class="card stat"><small>Utenti totali</small><strong id="statUsers">0</strong></div><div class="card stat"><small>Utenti attivi</small><strong id="statActive">0</strong></div><div class="card stat"><small>Contenuti</small><strong id="statContent">0</strong></div><div class="card stat"><small>Categorie</small><strong id="statCategories">0</strong></div></div>
+    <div class="grid settings-grid" style="margin-top:18px"><div class="card"><div class="section-head"><h2>Insight smart</h2><span class="badge">AI ready</span></div><div class="empty">Le analytics appariranno con i primi dati.</div></div><div class="card"><div class="section-head"><h2>Attività recente</h2></div><div id="activityList" class="empty">Nessuna attività registrata.</div></div></div>
+  </section>
+  <section id="view-users" class="hidden"><div class="card"><div class="section-head"><h2>Database utenti</h2><button id="addUserBtn" class="btn">+ Aggiungi Utente</button></div><div class="toolbar"><input id="userSearch" placeholder="Cerca username..."><select id="userFilter"><option value="all">Tutti</option><option value="Trial">Trial</option><option value="Mensile">Mensile</option><option value="Stagionale">Stagionale</option><option value="archived">Archiviati</option></select></div><div id="usersWrap"></div></div></section>
+  <section id="view-content" class="hidden"><div class="grid settings-grid"><div class="card"><div class="section-head"><h2>Categorie</h2><button id="addCategoryBtn" class="btn">+ Nuova Categoria</button></div><div class="subtle" style="margin-bottom:12px">Trascina le righe per scegliere l’ordine.</div><div id="categoriesWrap"></div></div><div class="card"><div class="section-head"><h2>Contenuti</h2><button id="addContentBtn" class="btn">+ Nuovo Contenuto</button></div><div id="contentWrap"></div></div></div></section>
+  <section id="view-settings" class="hidden"><div class="grid settings-grid">
+    <div class="card"><h2>Profilo Admin</h2><div class="field"><label>Username</label><input id="adminUsername"></div><div class="field"><label>Nuova password</label><input id="adminPassword" type="password" placeholder="Lascia vuoto per non cambiare"></div><button id="saveAdminBtn" class="btn" style="margin-top:16px">Salva modifiche</button></div>
+    <div class="card"><div class="section-head"><h2>Abbonamenti</h2><button id="addPlanBtn" class="btn">+ Aggiungi</button></div><div id="plansWrap"></div></div>
+    <div class="card"><h2>Sistema</h2><div id="maintenanceBox"></div><div class="field"><label>Email amministratore</label><input id="adminEmail"></div><div class="field"><label>Messaggio trial scaduto</label><textarea id="expiredMessage"></textarea></div><button id="saveSystemBtn" class="btn" style="margin-top:16px">Salva impostazioni</button></div>
+    <div class="card"><h2>Backup dati</h2><p class="subtle">Esporta o importa tutti i dati locali.</p><div class="row-actions"><button id="exportBtn" class="btn secondary">Esporta JSON</button><label class="btn secondary">Importa JSON<input id="importInput" type="file" accept="application/json" hidden></label><button id="resetBtn" class="btn danger">Azzera dati</button></div></div>
+  </div></section>
+</main>
+</div>
+
+<div id="frontShell" class="front-shell hidden">
+  <header class="front-top"><div class="brand"><img src="logo.png" alt="Serie A Classic"><span>Network</span></div><div style="display:flex;gap:10px;align-items:center"><input id="frontSearch" class="searchbar" placeholder="Cerca un contenuto..."><span id="frontUserBadge" class="badge gold"></span><button class="icon-btn" onclick="logout()">Esci</button></div></header>
+  <div class="front-body"><aside class="front-side"><button id="frontHomeBtn" class="active" onclick="showFrontHome()">⌂ Home</button><div id="frontCategories"></div></aside><main id="frontMain" class="front-main"></main></div>
+  <button class="chat-fab" onclick="toggleUserChat()">💬<span id="userUnread" class="chat-count hidden">0</span></button>
+</div>
+
+<div id="modalRoot"></div><div id="chatRoot"></div><div id="toast" class="toast hidden"></div>
+
+
+
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="supabase.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
