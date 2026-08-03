@@ -142,3 +142,692 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:13px 10p
 .message-delete:hover{
   color:#ffd2d2;
 }
+
+
+/* ============================================================
+   MOBILE REDESIGN — vera interfaccia mobile
+   ============================================================ */
+
+@media (max-width: 760px) {
+  :root {
+    --radius: 16px;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    font-size: 16px;
+    overflow-x: hidden;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+
+  .btn,
+  .icon-btn,
+  .nav button,
+  .front-side button {
+    min-height: 46px;
+  }
+
+  /* ---------- LOGIN ---------- */
+
+  .login-screen {
+    align-items: end;
+    padding: 0;
+    background-position: center;
+  }
+
+  .login-card {
+    width: 100%;
+    max-width: none;
+    padding: 28px 22px calc(28px + env(safe-area-inset-bottom));
+    border-radius: 28px 28px 0 0;
+    border-left: 0;
+    border-right: 0;
+    border-bottom: 0;
+    background: rgba(6, 13, 9, .96);
+  }
+
+  .login-card .brand img {
+    width: 92px;
+    height: 92px;
+  }
+
+  .login-card .brand span {
+    font-size: 10px;
+  }
+
+  .login-card .field {
+    margin-top: 18px;
+  }
+
+  .login-card input {
+    min-height: 52px;
+    padding: 14px 15px;
+  }
+
+  .login-card .btn {
+    min-height: 52px;
+    font-size: 16px;
+  }
+
+  /* ---------- ADMIN MOBILE ---------- */
+
+  .shell {
+    display: block;
+    min-height: 100dvh;
+  }
+
+  .sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    left: -100%;
+    width: min(88vw, 340px);
+    height: 100dvh;
+    padding: 20px 16px calc(20px + env(safe-area-inset-bottom));
+    z-index: 100;
+    transition: left .25s ease;
+    box-shadow: 28px 0 70px rgba(0,0,0,.55);
+    overflow-y: auto;
+  }
+
+  .sidebar.open {
+    left: 0;
+  }
+
+  .sidebar .brand {
+    align-items: flex-start;
+  }
+
+  .sidebar .brand img {
+    width: 58px;
+    height: 58px;
+  }
+
+  .sidebar .brand span {
+    display: block;
+    font-size: 8px;
+  }
+
+  .sidebar .tricolore {
+    margin-bottom: 18px;
+  }
+
+  .nav {
+    gap: 10px;
+  }
+
+  .nav button {
+    padding: 14px 16px;
+    font-size: 16px;
+    border: 1px solid var(--line);
+    background: #0c1711;
+  }
+
+  .sidebar-bottom {
+    position: static;
+    margin-top: 24px;
+  }
+
+  .main {
+    width: 100%;
+    padding: 14px 14px calc(28px + env(safe-area-inset-bottom));
+  }
+
+  .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    margin: -14px -14px 18px;
+    padding: 12px 14px;
+    align-items: center;
+    background: rgba(6, 11, 8, .96);
+    border-bottom: 1px solid var(--line);
+    backdrop-filter: blur(14px);
+  }
+
+  .topbar h1 {
+    font-size: 22px;
+    line-height: 1.15;
+  }
+
+  .topbar .subtle {
+    font-size: 12px;
+  }
+
+  .mobile-toggle {
+    display: inline-grid;
+    place-items: center;
+    width: 46px;
+    min-width: 46px;
+    height: 46px;
+    font-size: 20px;
+  }
+
+  .topbar-actions {
+    gap: 6px;
+  }
+
+  .topbar-actions .icon-btn {
+    width: 46px;
+    min-width: 46px;
+    padding: 0;
+    font-size: 0;
+  }
+
+  .topbar-actions .icon-btn::before {
+    content: "💬";
+    font-size: 20px;
+  }
+
+  .topbar-actions .badge.gold {
+    display: none;
+  }
+
+  .topbar-actions .badge.red {
+    position: absolute;
+    transform: translate(15px, -15px);
+    font-size: 10px;
+  }
+
+  .card {
+    padding: 17px;
+    border-radius: 17px;
+  }
+
+  .grid,
+  .stats,
+  .settings-grid,
+  .form-grid {
+    grid-template-columns: 1fr !important;
+    gap: 13px;
+  }
+
+  .stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .stat strong {
+    font-size: 27px;
+  }
+
+  .section-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .section-head .btn {
+    width: 100%;
+  }
+
+  .toolbar {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .toolbar input,
+  .toolbar select {
+    width: 100%;
+    min-width: 0;
+    min-height: 48px;
+  }
+
+  /* Tabella utenti trasformata in schede */
+  #usersWrap table,
+  #usersWrap thead,
+  #usersWrap tbody,
+  #usersWrap tr,
+  #usersWrap td {
+    display: block;
+    width: 100%;
+  }
+
+  #usersWrap thead {
+    display: none;
+  }
+
+  #usersWrap tbody {
+    display: grid;
+    gap: 12px;
+  }
+
+  #usersWrap tr {
+    padding: 15px;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    background: #0b1510;
+  }
+
+  #usersWrap td {
+    display: grid;
+    grid-template-columns: 105px minmax(0,1fr);
+    gap: 10px;
+    align-items: center;
+    padding: 9px 0;
+    border: 0;
+    font-size: 15px;
+  }
+
+  #usersWrap td::before {
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+  }
+
+  #usersWrap td:nth-child(1)::before { content: "Utente"; }
+  #usersWrap td:nth-child(2)::before { content: "Piano"; }
+  #usersWrap td:nth-child(3)::before { content: "Stato"; }
+  #usersWrap td:nth-child(4)::before { content: "Data"; }
+  #usersWrap td:nth-child(5)::before { content: "Azioni"; }
+
+  #usersWrap td:nth-child(1) .icon-btn {
+    width: 100%;
+    text-align: left;
+    font-size: 16px;
+  }
+
+  #usersWrap .row-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  #usersWrap .row-actions .icon-btn {
+    width: 100%;
+    font-size: 13px;
+  }
+
+  .category-row {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    padding: 14px;
+    gap: 10px;
+  }
+
+  .category-row.child {
+    margin-left: 12px;
+  }
+
+  .category-row .icon-btn {
+    width: 100%;
+  }
+
+  .category-row > .icon-btn:first-of-type {
+    grid-column: 1 / -1;
+  }
+
+  .category-row > .icon-btn:last-of-type {
+    grid-column: 1 / -1;
+  }
+
+  .content-row {
+    grid-template-columns: 96px minmax(0, 1fr);
+    gap: 12px;
+    padding: 12px;
+    border-radius: 15px;
+  }
+
+  .content-row .mini-thumb {
+    width: 96px;
+    border-radius: 10px;
+  }
+
+  .content-row .title-wrap b {
+    font-size: 16px;
+    white-space: normal;
+  }
+
+  .content-row .title-wrap .subtle {
+    font-size: 13px;
+    white-space: normal;
+  }
+
+  .content-row > .status-col,
+  .content-row > .row-actions {
+    grid-column: 1 / -1;
+  }
+
+  .content-row .row-actions {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .content-row .row-actions .icon-btn {
+    min-height: 44px;
+    font-size: 13px;
+  }
+
+  .subscription-item {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .subscription-item .row-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  /* Modal come bottom sheet */
+  .modal-backdrop {
+    align-items: end;
+    padding: 0;
+  }
+
+  .modal {
+    width: 100%;
+    max-height: 92dvh;
+    padding: 22px 18px calc(20px + env(safe-area-inset-bottom));
+    border-radius: 24px 24px 0 0;
+    border-left: 0;
+    border-right: 0;
+    border-bottom: 0;
+  }
+
+  .modal-actions {
+    position: sticky;
+    bottom: 0;
+    padding-top: 12px;
+    background: #0b1510;
+  }
+
+  .modal-actions .btn {
+    flex: 1;
+  }
+
+  .toast {
+    left: 14px;
+    right: 14px;
+    bottom: calc(14px + env(safe-area-inset-bottom));
+    text-align: center;
+  }
+
+  /* ---------- FRONTEND MOBILE ---------- */
+
+  .front-shell {
+    min-height: 100dvh;
+  }
+
+  .front-top {
+    position: sticky;
+    top: 0;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 10px;
+    padding: 12px 14px;
+    z-index: 40;
+  }
+
+  .front-top .brand {
+    justify-self: start;
+  }
+
+  .front-top .brand img {
+    width: 48px;
+    height: 48px;
+  }
+
+  .front-top .brand span {
+    display: block;
+    font-size: 8px;
+  }
+
+  .front-top > div:last-child {
+    grid-column: 1 / -1;
+    display: grid !important;
+    grid-template-columns: 1fr auto;
+    gap: 9px;
+    width: 100%;
+  }
+
+  .front-top .searchbar {
+    grid-column: 1 / -1;
+    width: 100%;
+    max-width: none;
+    min-height: 48px;
+    order: 1;
+  }
+
+  .frontUserBadge,
+  #frontUserBadge {
+    order: 2;
+    justify-self: start;
+    min-height: 38px;
+    padding-inline: 12px;
+    font-size: 13px;
+  }
+
+  .front-top .icon-btn {
+    order: 3;
+    min-width: 74px;
+    min-height: 42px;
+  }
+
+  .front-body {
+    display: block;
+    min-height: auto;
+  }
+
+  /* Le categorie diventano una barra orizzontale, non una mini-sidebar */
+  .front-side {
+    position: sticky;
+    top: 126px;
+    z-index: 25;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    height: auto;
+    padding: 10px 12px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+    background: rgba(8,16,12,.97);
+    scrollbar-width: none;
+  }
+
+  .front-side::-webkit-scrollbar {
+    display: none;
+  }
+
+  .front-side > button,
+  .front-side .parent-row,
+  .front-side .child-cat {
+    flex: 0 0 auto;
+  }
+
+  .front-side .parent-row {
+    display: flex;
+    gap: 5px;
+    align-items: center;
+  }
+
+  .front-side button {
+    width: auto;
+    min-width: max-content;
+    min-height: 42px;
+    padding: 10px 14px;
+    font-size: 14px;
+    text-align: center;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: #101d16;
+  }
+
+  .front-side .expand-btn {
+    width: 42px !important;
+    min-width: 42px !important;
+    padding: 0 !important;
+    border-radius: 50%;
+  }
+
+  .front-side .child-cat {
+    display: none;
+    padding-left: 14px !important;
+    font-size: 14px !important;
+  }
+
+  .front-side .child-cat.visible {
+    display: block;
+  }
+
+  .front-main {
+    padding: 14px 14px calc(94px + env(safe-area-inset-bottom));
+  }
+
+  .hero {
+    min-height: 360px;
+    padding: 24px 20px;
+    border-radius: 20px;
+    background-position: center !important;
+  }
+
+  .hero h1 {
+    max-width: none;
+    font-size: clamp(29px, 9vw, 40px);
+    line-height: 1.05;
+  }
+
+  .hero p {
+    font-size: 15px;
+    line-height: 1.55;
+  }
+
+  .hero .btn {
+    width: 100%;
+    min-height: 50px;
+    margin-top: 8px;
+  }
+
+  .front-grid {
+    grid-template-columns: 1fr;
+    gap: 15px;
+  }
+
+  .content-card {
+    border-radius: 18px;
+  }
+
+  .content-card .thumb {
+    aspect-ratio: 16 / 9;
+  }
+
+  .content-body {
+    padding: 15px;
+  }
+
+  .content-body h3 {
+    font-size: 18px;
+  }
+
+  .video-head h1 {
+    font-size: 27px;
+    line-height: 1.15;
+  }
+
+  .video-view iframe,
+  .video-view video {
+    border-radius: 14px;
+  }
+
+  /* Chat a tutto schermo su mobile */
+  .chat-fab {
+    right: 16px;
+    bottom: calc(16px + env(safe-area-inset-bottom));
+    width: 62px;
+    height: 62px;
+    z-index: 55;
+  }
+
+  .chat-panel {
+    inset: 0;
+    width: 100%;
+    height: 100dvh;
+    border: 0;
+    border-radius: 0;
+    z-index: 120;
+    grid-template-rows: auto 1fr auto;
+  }
+
+  .chat-head {
+    min-height: 66px;
+    padding: 12px 14px;
+    padding-top: calc(12px + env(safe-area-inset-top));
+  }
+
+  .chat-head select {
+    min-height: 44px;
+  }
+
+  .chat-body {
+    padding: 14px;
+  }
+
+  .bubble {
+    max-width: 88%;
+    padding: 12px 14px;
+    font-size: 15px;
+  }
+
+  .chat-compose {
+    padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+    background: #0b1510;
+  }
+
+  .chat-compose textarea {
+    min-height: 52px;
+    font-size: 16px;
+  }
+
+  .chat-compose .btn {
+    min-height: 52px;
+  }
+
+  .notice-card {
+    padding: 26px 20px;
+    border-radius: 20px;
+  }
+}
+
+@media (min-width: 520px) and (max-width: 760px) {
+  .front-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 390px) {
+  .stats {
+    grid-template-columns: 1fr !important;
+  }
+
+  .front-top > div:last-child {
+    grid-template-columns: 1fr;
+  }
+
+  #frontUserBadge,
+  .front-top .icon-btn {
+    width: 100%;
+  }
+
+  .content-row {
+    grid-template-columns: 76px minmax(0, 1fr);
+  }
+
+  .content-row .mini-thumb {
+    width: 76px;
+  }
+
+  .content-row .row-actions {
+    grid-template-columns: 1fr;
+  }
+}
