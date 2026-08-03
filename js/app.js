@@ -506,7 +506,7 @@ function renderAudienceIntelligence() {
   setText("aiCompletionNote", validDurations.length ? `Su ${validDurations.length} visioni` : "In attesa dei primi dati");
 
   renderAudienceChart(progress, presence);
-  renderNowWatching(watching);
+  renderNowWatching(watching, [...onlineUsers.values()]);
   const ranking = buildContentRanking(progress);
   renderContentRanking(ranking);
   renderSmartInsights({ progress, watching, uniqueViewers, completionRate, ranking });
@@ -536,6 +536,9 @@ function currentPresencePayload() {
   return {
     user_id: sessionUser?.id || null,
     username: sessionUser?.username || "Utente",
+    plan: sessionUser?.plan || null,
+    device: /Mobile|Android|iPhone|iPad/i.test(navigator.userAgent) ? "Mobile / Tablet" : "Desktop",
+    browser: /Safari/i.test(navigator.userAgent) && !/Chrome|Chromium|Edg/i.test(navigator.userAgent) ? "Safari" : (/Chrome|Chromium/i.test(navigator.userAgent) ? "Chrome" : (/Firefox/i.test(navigator.userAgent) ? "Firefox" : "Browser")),
     role: sessionUser?.role || null,
     page: activeVideoContentId ? "watching" : "browsing",
     content_id: activeVideoContentId || null,
@@ -630,25 +633,61 @@ function renderAudienceChart(progress, presence = []) {
   setText("aiTrendBadge", delta > 0 ? `▲ ${delta}%` : delta < 0 ? `▼ ${Math.abs(delta)}%` : "Stabile");
 }
 
-function renderNowWatching(watching) {
+function analyticsUserLabel(item) {
+  const profile = userForAnalytics(item?.user_id);
+  return item?.username || profile?.username || (item?.user_id ? `Utente ${String(item.user_id).slice(0, 8)}` : "Utente sconosciuto");
+}
+
+function renderNowWatching(watching, online = []) {
   const wrap = $("aiNowWatching");
   if (!wrap) return;
-  const rows = watching.slice(0, 5);
+
+  // Presence è la fonte autorevole per sapere chi è davvero collegato in questo momento.
+  // Le righe video_progress vengono usate soltanto come fallback quando Realtime non ha ancora sincronizzato.
+  const liveByUser = new Map();
+  (online || []).forEach((item) => {
+    if (item?.user_id) liveByUser.set(String(item.user_id), item);
+  });
+  if (!liveByUser.size) {
+    (watching || []).forEach((item) => {
+      if (item?.user_id) liveByUser.set(String(item.user_id), item);
+    });
+  }
+
+  const rows = [...liveByUser.values()]
+    .sort((a, b) => Number(Boolean(b.content_id || b.page === "watching")) - Number(Boolean(a.content_id || a.page === "watching")))
+    .slice(0, 8);
+
   wrap.className = rows.length ? "ai-list" : "ai-list empty compact-empty";
   wrap.innerHTML = rows.length ? rows.map((item) => {
     const content = contentForAnalytics(item.content_id);
-    const user = userForAnalytics(item.user_id);
+    const profile = userForAnalytics(item.user_id);
     const duration = Number(item.duration_seconds || 0);
     const position = Number(item.position_seconds || 0);
     const percent = duration ? Math.min(100, Math.round(position / duration * 100)) : 0;
-    const title = item.content_title || content?.title || "Contenuto";
-    const username = item.username || user?.username || "Utente";
+    const username = analyticsUserLabel(item);
+    const initials = username.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "U";
+    const isWatching = Boolean(item.content_id || item.page === "watching");
+    const title = item.content_title || content?.title || (isWatching ? "Contenuto aperto" : "Sta navigando nel catalogo");
+    const activity = isWatching
+      ? (item.playing ? "sta guardando ora" : "ha aperto il contenuto")
+      : "online, sta navigando";
+    const meta = [item.plan || profile?.plan, item.browser, item.device].filter(Boolean).join(" · ");
     const image = content?.preview || content?.cover;
-    const detail = item.page === "watching" ? (item.playing ? "in riproduzione" : "pagina contenuto") : `${percent}% visto`;
-    return `<div class="ai-watch-row"><div class="ai-thumb">${image ? `<img src="${esc(image)}" alt="">` : "▶"}</div><div class="ai-row-copy"><b>${esc(title)}</b><small>${esc(username)} · ${esc(detail)}</small><div class="ai-progress"><i style="--w:${percent || (item.playing ? 18 : 5)}%"></i></div></div><div class="ai-row-value">ora</div></div>`;
-  }).join("") : "Nessuna visione negli ultimi 5 minuti.";
-}
+    const progressWidth = percent || (item.playing ? 22 : (isWatching ? 8 : 3));
 
+    return `<div class="ai-watch-row ai-user-live-row">
+      <div class="ai-live-avatar">${esc(initials)}</div>
+      <div class="ai-row-copy">
+        <div class="ai-live-user-head"><b>${esc(username)}</b><span class="ai-online-dot">ONLINE</span></div>
+        <small><strong>${esc(activity)}</strong>${isWatching ? ` · ${esc(title)}` : ""}</small>
+        ${meta ? `<small class="ai-live-meta">${esc(meta)}</small>` : ""}
+        <div class="ai-progress"><i style="--w:${progressWidth}%"></i></div>
+      </div>
+      ${image ? `<div class="ai-live-cover"><img src="${esc(image)}" alt=""></div>` : `<div class="ai-row-value">ora</div>`}
+    </div>`;
+  }).join("") : "Nessun utente online in questo momento.";
+}
 function buildContentRanking(progress) {
   const map = new Map();
   progress.forEach((item) => {
