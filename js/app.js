@@ -16,6 +16,12 @@ let activeChatUserId = null;
 let notificationAudioContext = null;
 let notificationSoundUnlocked = false;
 
+let activeVideoPlayer = null;
+let activeVideoElement = null;
+let activeVideoContentId = null;
+let activeVideoProgressTimer = null;
+let youtubeApiPromise = null;
+
 const $ = (id) => document.getElementById(id);
 const clone = (x) => JSON.parse(JSON.stringify(x));
 const esc = (s = "") => String(s).replace(/[&<>"']/g, (m) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]));
@@ -340,6 +346,8 @@ async function attemptLogin() {
 }
 
 async function logout() {
+  await persistActiveVideoProgress();
+  destroyActiveVideo();
   stopMessagesRealtime();
   await db.auth.signOut();
   sessionUser = null;
@@ -714,6 +722,523 @@ function openPlanModal(i = null) {
 window.editPlan = (i) => openPlanModal(i);
 window.deletePlan = async (i) => { const p = state.plans[i]; if (state.users.some((u) => u.plan === p.name)) return toast("Piano associato a utenti"); const { error } = await db.from("plans").delete().eq("id", p.id); if (error) toast(error.message); else await refreshData(); };
 
+
+function formatVideoTime(value) {
+  const seconds = Math.max(0, Math.floor(Number(value) || 0));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remaining = seconds % 60;
+
+  return hours
+    ? `${hours}:${String(minutes).padStart(2, "0")}:${String(remaining).padStart(2, "0")}`
+    : `${minutes}:${String(remaining).padStart(2, "0")}`;
+}
+
+function extractYouTubeVideoId(url) {
+  if (!url) return "";
+
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.replace(/^www\./, "");
+
+    if (host === "youtu.be") {
+      return parsed.pathname.split("/").filter(Boolean)[0] || "";
+    }
+
+    if (host.endsWith("youtube.com")) {
+      if (parsed.pathname === "/watch") {
+        return parsed.searchParams.get("v") || "";
+      }
+
+      const parts = parsed.pathname.split("/").filter(Boolean);
+      const supported = ["embed", "shorts", "live"];
+      const index = parts.findIndex((part) => supported.includes(part));
+
+      if (index >= 0 && parts[index + 1]) {
+        return parts[index + 1];
+      }
+    }
+  } catch (_) {}
+
+  return "";
+}
+
+function loadYouTubeIframeApi() {
+  if (window.YT?.Player) {
+    return Promise.resolve(window.YT);
+  }
+
+  if (youtubeApiPromise) {
+    return youtubeApiPromise;
+  }
+
+  youtubeApiPromise = new Promise((resolve, reject) => {
+    const previousReady = window.onYouTubeIframeAPIReady;
+
+    window.onYouTubeIframeAPIReady = () => {
+      if (typeof previousReady === "function") {
+        previousReady();
+      }
+      resolve(window.YT);
+    };
+
+    const existing = document.querySelector(
+      'script[src="https://www.youtube.com/iframe_api"]'
+    );
+
+    if (!existing) {
+      const script = document.createElement("script");
+      script.src = "https://www.youtube.com/iframe_api";
+      script.async = true;
+      script.onerror = () =>
+        reject(new Error("Impossibile caricare il player YouTube."));
+      document.head.appendChild(script);
+    }
+  });
+
+  return youtubeApiPromise;
+}
+
+async function getVideoProgress(contentId) {
+  const { data, error } = await db
+    .from("video_progress")
+    .select("position_seconds, duration_seconds, completed, updated_at")
+    .eq("user_id", sessionUser.id)
+    .eq("content_id", contentId)
+    .maybeSingle();
+
+  if (error) {
+    console.error("Errore caricamento avanzamento:", error);
+    return null;
+  }
+
+  return data;
+}
+
+async function saveVideoProgress(
+  contentId,
+  positionSeconds,
+  durationSeconds,
+  forceCompleted = false
+) {
+  if (!sessionUser || !contentId) return;
+
+  const position = Math.max(0, Number(positionSeconds) || 0);
+  const duration = Math.max(0, Number(durationSeconds) || 0);
+  const completed =
+    forceCompleted ||
+    (duration > 0 &&
+      (position >= duration - 15 || position / duration >= 0.97));
+
+  const { error } = await db
+    .from("video_progress")
+    .upsert(
+      {
+        user_id: sessionUser.id,
+        content_id: contentId,
+        position_seconds: completed ? 0 : Math.floor(position),
+        duration_seconds: Math.floor(duration),
+        completed,
+        updated_at: new Date().toISOString()
+      },
+      {
+        onConflict: "user_id,content_id"
+      }
+    );
+
+  if (error) {
+    console.error("Errore salvataggio avanzamento:", error);
+  }
+}
+
+function stopVideoProgressTimer() {
+  if (activeVideoProgressTimer) {
+    clearInterval(activeVideoProgressTimer);
+    activeVideoProgressTimer = null;
+  }
+}
+
+async function persistActiveVideoProgress() {
+  if (!activeVideoContentId) return;
+
+  try {
+    if (activeVideoElement) {
+      await saveVideoProgress(
+        activeVideoContentId,
+        activeVideoElement.currentTime,
+        activeVideoElement.duration
+      );
+      return;
+    }
+
+    if (
+      activeVideoPlayer &&
+      typeof activeVideoPlayer.getCurrentTime === "function"
+    ) {
+      await saveVideoProgress(
+        activeVideoContentId,
+        activeVideoPlayer.getCurrentTime(),
+        activeVideoPlayer.getDuration()
+      );
+    }
+  } catch (error) {
+    console.warn("Salvataggio posizione non riuscito:", error);
+  }
+}
+
+function destroyActiveVideo() {
+  stopVideoProgressTimer();
+
+  if (activeVideoElement) {
+    activeVideoElement.pause();
+    activeVideoElement = null;
+  }
+
+  if (
+    activeVideoPlayer &&
+    typeof activeVideoPlayer.destroy === "function"
+  ) {
+    try {
+      activeVideoPlayer.destroy();
+    } catch (_) {}
+  }
+
+  activeVideoPlayer = null;
+  activeVideoContentId = null;
+}
+
+async function leaveActiveVideo() {
+  await persistActiveVideoProgress();
+  destroyActiveVideo();
+}
+
+function updateCustomPlayerControls(current, duration, playing) {
+  const playButton = $("videoPlayPause");
+  const range = $("videoSeek");
+  const time = $("videoTime");
+
+  if (playButton) {
+    playButton.textContent = playing ? "❚❚" : "▶";
+    playButton.setAttribute(
+      "aria-label",
+      playing ? "Pausa" : "Riproduci"
+    );
+  }
+
+  if (range && duration > 0 && document.activeElement !== range) {
+    range.max = String(Math.floor(duration));
+    range.value = String(Math.floor(current));
+  }
+
+  if (time) {
+    time.textContent =
+      `${formatVideoTime(current)} / ${formatVideoTime(duration)}`;
+  }
+}
+
+function bindCustomPlayerControls({
+  getCurrentTime,
+  getDuration,
+  isPlaying,
+  play,
+  pause,
+  seek
+}) {
+  const playButton = $("videoPlayPause");
+  const range = $("videoSeek");
+  const fullscreenButton = $("videoFullscreen");
+  const playerWrap = $("customVideoPlayer");
+
+  playButton.onclick = () => {
+    if (isPlaying()) pause();
+    else play();
+  };
+
+  range.oninput = () => {
+    seek(Number(range.value) || 0);
+  };
+
+  fullscreenButton.onclick = async () => {
+    try {
+      if (!document.fullscreenElement) {
+        await playerWrap.requestFullscreen();
+      } else {
+        await document.exitFullscreen();
+      }
+    } catch (error) {
+      console.warn("Fullscreen non disponibile:", error);
+    }
+  };
+
+  stopVideoProgressTimer();
+  activeVideoProgressTimer = setInterval(async () => {
+    const current = getCurrentTime();
+    const duration = getDuration();
+
+    updateCustomPlayerControls(
+      current,
+      duration,
+      isPlaying()
+    );
+
+    if (isPlaying()) {
+      await saveVideoProgress(
+        activeVideoContentId,
+        current,
+        duration
+      );
+    }
+  }, 5000);
+}
+
+function renderVideoPlayerShell(content) {
+  $("frontMain").innerHTML = `
+    <button class="icon-btn" id="videoBackButton">← Indietro</button>
+
+    <div class="video-head">
+      <h1>${esc(content.title)}</h1>
+      <p class="subtle">${esc(content.description || "")}</p>
+    </div>
+
+    <div id="customVideoPlayer" class="custom-video-player">
+      <div id="videoMount" class="video-mount"></div>
+
+      <div class="custom-video-controls">
+        <button
+          id="videoPlayPause"
+          class="video-control-button"
+          type="button"
+          aria-label="Riproduci"
+        >
+          ▶
+        </button>
+
+        <input
+          id="videoSeek"
+          class="video-seek"
+          type="range"
+          min="0"
+          max="0"
+          value="0"
+          step="1"
+          aria-label="Posizione video"
+        >
+
+        <span id="videoTime" class="video-time">0:00 / 0:00</span>
+
+        <button
+          id="videoFullscreen"
+          class="video-control-button"
+          type="button"
+          aria-label="Schermo intero"
+        >
+          ⛶
+        </button>
+      </div>
+    </div>
+
+    <p class="video-provider-note">
+      Riproduzione incorporata. Alcuni elementi identificativi possono essere
+      mostrati dal fornitore del video.
+    </p>
+  `;
+
+  $("videoBackButton").onclick = async () => {
+    await leaveActiveVideo();
+    showFrontHome();
+  };
+}
+
+async function startYouTubePlayback(content, videoId, startSeconds) {
+  renderVideoPlayerShell(content);
+  activeVideoContentId = content.id;
+
+  await loadYouTubeIframeApi();
+
+  activeVideoPlayer = new window.YT.Player("videoMount", {
+    videoId,
+    width: "100%",
+    height: "100%",
+    playerVars: {
+      autoplay: 1,
+      controls: 0,
+      disablekb: 1,
+      fs: 0,
+      iv_load_policy: 3,
+      playsinline: 1,
+      rel: 0,
+      origin: window.location.origin
+    },
+    events: {
+      onReady: (event) => {
+        if (startSeconds > 0) {
+          event.target.seekTo(startSeconds, true);
+        }
+
+        event.target.playVideo();
+
+        bindCustomPlayerControls({
+          getCurrentTime: () => event.target.getCurrentTime() || 0,
+          getDuration: () => event.target.getDuration() || 0,
+          isPlaying: () =>
+            event.target.getPlayerState() === window.YT.PlayerState.PLAYING,
+          play: () => event.target.playVideo(),
+          pause: () => event.target.pauseVideo(),
+          seek: (seconds) => event.target.seekTo(seconds, true)
+        });
+      },
+      onStateChange: async (event) => {
+        const current = event.target.getCurrentTime() || 0;
+        const duration = event.target.getDuration() || 0;
+        const playing =
+          event.data === window.YT.PlayerState.PLAYING;
+
+        updateCustomPlayerControls(current, duration, playing);
+
+        if (
+          event.data === window.YT.PlayerState.PAUSED ||
+          event.data === window.YT.PlayerState.CUED
+        ) {
+          await saveVideoProgress(
+            content.id,
+            current,
+            duration
+          );
+        }
+
+        if (event.data === window.YT.PlayerState.ENDED) {
+          await saveVideoProgress(
+            content.id,
+            duration,
+            duration,
+            true
+          );
+          updateCustomPlayerControls(0, duration, false);
+        }
+      }
+    }
+  });
+}
+
+function startNativePlayback(content, url, startSeconds) {
+  renderVideoPlayerShell(content);
+  activeVideoContentId = content.id;
+
+  $("videoMount").innerHTML = `
+    <video
+      id="nativeVideoPlayer"
+      src="${esc(url)}"
+      playsinline
+      preload="metadata"
+    ></video>
+  `;
+
+  const video = $("nativeVideoPlayer");
+  activeVideoElement = video;
+
+  video.onloadedmetadata = () => {
+    if (startSeconds > 0 && startSeconds < video.duration) {
+      video.currentTime = startSeconds;
+    }
+
+    video.play().catch(() => {});
+    updateCustomPlayerControls(
+      video.currentTime,
+      video.duration,
+      !video.paused
+    );
+  };
+
+  video.onplay = () =>
+    updateCustomPlayerControls(
+      video.currentTime,
+      video.duration,
+      true
+    );
+
+  video.onpause = async () => {
+    updateCustomPlayerControls(
+      video.currentTime,
+      video.duration,
+      false
+    );
+
+    await saveVideoProgress(
+      content.id,
+      video.currentTime,
+      video.duration
+    );
+  };
+
+  video.onended = async () => {
+    await saveVideoProgress(
+      content.id,
+      video.duration,
+      video.duration,
+      true
+    );
+  };
+
+  bindCustomPlayerControls({
+    getCurrentTime: () => video.currentTime || 0,
+    getDuration: () => video.duration || 0,
+    isPlaying: () => !video.paused && !video.ended,
+    play: () => video.play(),
+    pause: () => video.pause(),
+    seek: (seconds) => {
+      video.currentTime = seconds;
+    }
+  });
+}
+
+window.startContentPlayback = async (
+  contentId,
+  startSeconds = 0
+) => {
+  await leaveActiveVideo();
+
+  const content = availableContents().find(
+    (item) => item.id === contentId
+  );
+
+  if (!content) return;
+
+  const youtubeId = extractYouTubeVideoId(content.url);
+
+  if (youtubeId) {
+    await startYouTubePlayback(
+      content,
+      youtubeId,
+      Number(startSeconds) || 0
+    );
+    return;
+  }
+
+  if (/\.mp4($|\?)/i.test(content.url || "")) {
+    startNativePlayback(
+      content,
+      content.url,
+      Number(startSeconds) || 0
+    );
+    return;
+  }
+
+  $("frontMain").innerHTML = `
+    <button class="icon-btn" onclick="showFrontHome()">← Indietro</button>
+    <div class="video-head">
+      <h1>${esc(content.title)}</h1>
+      <p class="subtle">${esc(content.description || "")}</p>
+    </div>
+    <div class="empty">
+      Questo tipo di collegamento video non supporta la funzione Riprendi.
+    </div>
+  `;
+};
+
+window.addEventListener("pagehide", () => {
+  persistActiveVideoProgress();
+});
+
 function normalizeVideoUrl(url) {
   if (!url) return "";
   try { const u = new URL(url); if (u.hostname.includes("youtu.be")) return `https://www.youtube.com/embed/${u.pathname.replace("/", "")}`;
@@ -727,7 +1252,8 @@ function renderFrontend() {
   $("frontCategories").innerHTML = html.join(""); renderUnread();
 }
 function frontCards(arr) { return `<div class="front-grid">${arr.map((c) => `<div class="content-card" onclick="openFrontContent('${c.id}')" style="cursor:pointer"><div class="thumb">${c.preview ? `<img src="${c.preview}" alt="">` : "Anteprima"}</div><div class="content-body"><h3>${esc(c.title)}</h3></div></div>`).join("")}</div>`; }
-function showFrontHome() {
+async function showFrontHome() {
+  await leaveActiveVideo();
   closeFrontMobileMenu();
   activeFrontCategory = null; document.querySelectorAll(".front-side button").forEach((b) => b.classList.remove("active")); $("frontHomeBtn")?.classList.add("active");
   const arr = availableContents(), latest = arr[0], heroStyle = latest?.cover ? ` style="background:linear-gradient(90deg,rgba(4,8,6,.92),rgba(4,8,6,.25)),url('${latest.cover.replace(/'/g, "%27")}') center/cover no-repeat"` : "";
@@ -736,8 +1262,92 @@ function showFrontHome() {
 window.showFrontHome = showFrontHome;
 window.toggleFrontChildren = (id, e) => { e?.stopPropagation(); document.querySelectorAll(`.child-cat[data-parent="${id}"]`).forEach((el) => el.classList.toggle("visible")); };
 window.selectFrontCategory = (id) => { closeFrontMobileMenu(); activeFrontCategory = id; document.querySelectorAll(".front-side button").forEach((b) => b.classList.remove("active")); $(`front-cat-${id}`)?.classList.add("active"); showCategory(id); };
-window.showCategory = (id) => { const cat = state.categories.find((c) => c.id === id), arr = availableContents().filter((c) => c.category_ids?.includes(id)); $("frontMain").innerHTML = `<div class="section-head"><div><h1>${esc(cat?.name || "Categoria")}</h1><div class="subtle">Contenuti ordinati dal più recente.</div></div></div>${arr.length ? frontCards(arr) : '<div class="empty">Nessun contenuto in questa categoria.</div>'}`; };
-window.openFrontContent = (id) => { const c = availableContents().find((x) => x.id === id); if (!c) return; let safeUrl = normalizeVideoUrl(c.url); if (safeUrl.includes("youtube.com/embed/")) safeUrl = safeUrl.replace("youtube.com/embed/", "youtube-nocookie.com/embed/"); let embed = !safeUrl ? '<div class="empty">URL video non disponibile.</div>' : /\.mp4($|\?)/i.test(safeUrl) ? `<video src="${esc(safeUrl)}" controls playsinline></video>` : `<iframe src="${esc(safeUrl + (safeUrl.includes("?") ? "&" : "?") + "rel=0&modestbranding=1&iv_load_policy=3&playsinline=1")}" title="${esc(c.title)}" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>`; $("frontMain").innerHTML = `<button class="icon-btn" onclick="showFrontHome()">← Indietro</button><div class="video-head"><h1>${esc(c.title)}</h1><p class="subtle">${esc(c.description || "")}</p></div><div class="video-view">${embed}</div>`; };
+window.showCategory = async (id) => { await leaveActiveVideo(); const cat = state.categories.find((c) => c.id === id), arr = availableContents().filter((c) => c.category_ids?.includes(id)); $("frontMain").innerHTML = `<div class="section-head"><div><h1>${esc(cat?.name || "Categoria")}</h1><div class="subtle">Contenuti ordinati dal più recente.</div></div></div>${arr.length ? frontCards(arr) : '<div class="empty">Nessun contenuto in questa categoria.</div>'}`; };
+window.openFrontContent = async (id) => {
+  await leaveActiveVideo();
+
+  const content = availableContents().find(
+    (item) => item.id === id
+  );
+
+  if (!content) return;
+
+  const youtubeId = extractYouTubeVideoId(content.url);
+  const supported =
+    Boolean(youtubeId) ||
+    /\.mp4($|\?)/i.test(content.url || "");
+
+  const progress = supported
+    ? await getVideoProgress(content.id)
+    : null;
+
+  const resumeSeconds =
+    progress && !progress.completed
+      ? Math.floor(progress.position_seconds || 0)
+      : 0;
+
+  const canResume = resumeSeconds >= 10;
+
+  $("frontMain").innerHTML = `
+    <button class="icon-btn" id="contentChoiceBack">← Indietro</button>
+
+    <div class="video-choice-card">
+      ${
+        content.cover
+          ? `<img class="video-choice-cover" src="${esc(content.cover)}" alt="">`
+          : ""
+      }
+
+      <div class="video-choice-copy">
+        <span class="badge gold">SERIE A CLASSIC</span>
+        <h1>${esc(content.title)}</h1>
+        <p class="subtle">${esc(content.description || "")}</p>
+
+        <div class="video-choice-actions">
+          <button
+            class="btn"
+            id="watchFromStart"
+            ${supported ? "" : "disabled"}
+          >
+            ▶ Guarda dall’inizio
+          </button>
+
+          ${
+            canResume
+              ? `
+                <button class="btn secondary" id="resumeVideo">
+                  ↻ Riprendi da ${formatVideoTime(resumeSeconds)}
+                </button>
+              `
+              : ""
+          }
+        </div>
+
+        ${
+          supported
+            ? ""
+            : `
+              <p class="video-provider-note">
+                Questo collegamento non supporta ancora la ripresa automatica.
+              </p>
+            `
+        }
+      </div>
+    </div>
+  `;
+
+  $("contentChoiceBack").onclick = showFrontHome;
+
+  if (supported) {
+    $("watchFromStart").onclick = () =>
+      startContentPlayback(content.id, 0);
+
+    if (canResume) {
+      $("resumeVideo").onclick = () =>
+        startContentPlayback(content.id, resumeSeconds);
+    }
+  }
+};
 
 function messagesFor(userId) {
   return state.messages
