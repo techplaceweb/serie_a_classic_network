@@ -364,6 +364,7 @@ function showAdmin() {
   hideAll();
   $("adminShell").classList.remove("hidden");
   renderAll();
+  switchAdminView(currentAdminView || "dashboard");
   startMessagesRealtime();
 }
 function showFrontend(user) {
@@ -406,21 +407,71 @@ async function restoreSession() {
   }
 }
 
-function switchAdminView(v) {
-  currentAdminView = v;
-  document.querySelectorAll("section[id^='view-']").forEach((s) => s.classList.add("hidden"));
-  $(`view-${v}`).classList.remove("hidden");
-  document.querySelectorAll(".nav button").forEach((b) => b.classList.toggle("active", b.dataset.view === v));
-  const titles = {
-    dashboard: ["Dashboard", "Centro di controllo"], users: ["Utenti", "Accessi e abbonamenti"],
-    content: ["Contenuti", "Categorie e archivio"], settings: ["Impostazioni", "Profilo, piani e sistema"]
-  };
-  $("pageTitle").textContent = titles[v][0];
-  $("pageSubtitle").textContent = titles[v][1];
+function switchAdminView(viewName) {
+  const allowedViews = [
+    "dashboard",
+    "users",
+    "content",
+    "settings"
+  ];
 
+  if (!allowedViews.includes(viewName)) {
+    console.error("Sezione admin non valida:", viewName);
+    return;
+  }
+
+  currentAdminView = viewName;
+
+  allowedViews.forEach((name) => {
+    const section = $(`view-${name}`);
+    if (!section) return;
+
+    const active = name === viewName;
+
+    section.classList.toggle("hidden", !active);
+    section.hidden = !active;
+    section.style.display = active ? "block" : "none";
+    section.setAttribute("aria-hidden", String(!active));
+  });
+
+  document
+    .querySelectorAll(".nav button[data-view]")
+    .forEach((button) => {
+      const active = button.dataset.view === viewName;
+
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-current", active ? "page" : "false");
+    });
+
+  const titles = {
+    dashboard: ["Dashboard", "Centro di controllo"],
+    users: ["Utenti", "Accessi e abbonamenti"],
+    content: ["Contenuti", "Categorie e archivio"],
+    settings: ["Impostazioni", "Profilo, piani e sistema"]
+  };
+
+  $("pageTitle").textContent = titles[viewName][0];
+  $("pageSubtitle").textContent = titles[viewName][1];
+
+  // Chiude realmente il drawer mobile/tablet.
   $("sidebar").classList.remove("open");
   $("adminMenuOverlay")?.classList.add("hidden");
   document.body.classList.remove("menu-open");
+
+  // Torna in alto nella nuova sezione.
+  const main = document.querySelector("#adminShell .main");
+
+  if (main) {
+    main.scrollTo({
+      top: 0,
+      behavior: "auto"
+    });
+  }
+
+  window.scrollTo({
+    top: 0,
+    behavior: "auto"
+  });
 }
 
 function renderAll() {
@@ -2252,7 +2303,22 @@ $("mobileSearchInput")?.addEventListener(
   }
 );
 
-document.querySelectorAll(".nav button[data-view]").forEach((b) => b.onclick = () => switchAdminView(b.dataset.view));
+document
+  .querySelectorAll(".nav button[data-view]")
+  .forEach((button) => {
+    button.type = "button";
+
+    button.addEventListener(
+      "click",
+      (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+
+        switchAdminView(button.dataset.view);
+      },
+      { capture: true }
+    );
+  });
 $("userSearch").oninput = renderUsers; $("userFilter").onchange = renderUsers;
 $("addUserBtn").onclick = () => openUserModal();
 $("addCategoryBtn").onclick = () => openCategoryModal();
