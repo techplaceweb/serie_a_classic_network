@@ -41,7 +41,49 @@
   <section id="view-dashboard">
     <div class="card" style="margin-bottom:18px"><h2 style="margin:0 0 6px">Buongiorno Admin,</h2><div class="subtle">questo è il tuo centro di controllo.</div></div>
     <div class="grid stats"><div class="card stat"><small>Utenti totali</small><strong id="statUsers">0</strong></div><div class="card stat"><small>Utenti attivi</small><strong id="statActive">0</strong></div><div class="card stat"><small>Contenuti</small><strong id="statContent">0</strong></div><div class="card stat"><small>Categorie</small><strong id="statCategories">0</strong></div></div>
-    <div class="grid settings-grid" style="margin-top:18px"><div class="card"><div class="section-head"><h2>Insight smart</h2><span class="badge">AI ready</span></div><div class="empty">Le analytics appariranno con i primi dati.</div></div><div class="card"><div class="section-head"><h2>Attività recente</h2></div><div id="activityList" class="empty">Nessuna attività registrata.</div></div></div>
+    <div class="audience-panel" style="margin-top:18px">
+      <div class="audience-head">
+        <div><div class="eyebrow">SMART ANALYTICS</div><h2>Audience Intelligence</h2><p>Comportamento, visioni e opportunità editoriali in un unico colpo d’occhio.</p></div>
+        <div class="live-pill"><i></i><span id="audienceLiveLabel">LIVE</span><small id="audienceUpdated">in aggiornamento</small></div>
+      </div>
+
+      <div class="audience-kpis">
+        <article class="ai-kpi"><span class="ai-kpi-icon">●</span><small>Online ora</small><strong id="aiOnlineNow">0</strong><em id="aiOnlineNote">Attività negli ultimi 5 min</em></article>
+        <article class="ai-kpi"><span class="ai-kpi-icon">▶</span><small>In visione</small><strong id="aiWatchingNow">0</strong><em id="aiWatchingNote">Sessioni video recenti</em></article>
+        <article class="ai-kpi"><span class="ai-kpi-icon">◉</span><small>Spettatori unici</small><strong id="aiUniqueViewers">0</strong><em id="aiViewersNote">Dati disponibili</em></article>
+        <article class="ai-kpi"><span class="ai-kpi-icon">⌁</span><small>Completamento medio</small><strong id="aiCompletionRate">0%</strong><em id="aiCompletionNote">Sui contenuti iniziati</em></article>
+      </div>
+
+      <div class="audience-main-grid">
+        <article class="ai-card ai-trend-card">
+          <div class="section-head"><div><span class="eyebrow">ULTIME 24 ORE</span><h3>Attività degli spettatori</h3></div><span class="badge green" id="aiTrendBadge">Dati live</span></div>
+          <div id="aiActivityChart" class="ai-activity-chart" aria-label="Grafico attività nelle ultime 24 ore"></div>
+          <div class="ai-chart-footer"><span>24 ore fa</span><span>Adesso</span></div>
+        </article>
+
+        <article class="ai-card">
+          <div class="section-head"><div><span class="eyebrow">IN QUESTO MOMENTO</span><h3>Cosa stanno guardando</h3></div><span id="aiWatchingCount" class="badge gold">0 live</span></div>
+          <div id="aiNowWatching" class="ai-list empty compact-empty">Nessuna visione recente.</div>
+        </article>
+      </div>
+
+      <div class="audience-bottom-grid">
+        <article class="ai-card">
+          <div class="section-head"><div><span class="eyebrow">PERFORMANCE</span><h3>Contenuti più guardati</h3></div><span class="badge">Top 5</span></div>
+          <div id="aiTopContents" class="ai-ranking empty compact-empty">Non ci sono ancora dati di visione.</div>
+        </article>
+
+        <article class="ai-card ai-insights-card">
+          <div class="section-head"><div><span class="eyebrow">ANALISI AUTOMATICA</span><h3>Insight intelligenti</h3></div><span class="ai-orbit">AI</span></div>
+          <div id="aiInsights" class="ai-insights"></div>
+        </article>
+
+        <article class="ai-card">
+          <div class="section-head"><div><span class="eyebrow">REAL TIME</span><h3>Attività recente</h3></div></div>
+          <div id="activityList" class="empty compact-empty">Nessuna attività registrata.</div>
+        </article>
+      </div>
+    </div>
   </section>
   <section id="view-users" class="hidden"><div class="card"><div class="section-head"><h2>Database utenti</h2><button id="addUserBtn" class="btn">+ Aggiungi Utente</button></div><div class="toolbar"><input id="userSearch" placeholder="Cerca username..."><select id="userFilter"><option value="all">Tutti</option><option value="Trial">Trial</option><option value="Mensile">Mensile</option><option value="Stagionale">Stagionale</option><option value="archived">Archiviati</option></select></div><div id="usersWrap"></div></div></section>
   <section id="view-content" class="hidden"><div class="grid settings-grid"><div class="card"><div class="section-head"><h2>Categorie</h2><button id="addCategoryBtn" class="btn">+ Nuova Categoria</button></div><div class="subtle" style="margin-bottom:12px">Trascina le righe per scegliere l’ordine.</div><div id="categoriesWrap"></div></div><div class="card"><div class="section-head"><h2>Contenuti</h2><button id="addContentBtn" class="btn">+ Nuovo Contenuto</button></div><div id="contentWrap"></div></div></div></section>
@@ -87,6 +129,23 @@
     <button onclick="toggleUserChat()">💬<span>Chat</span><b id="mobileUnread" class="mobile-nav-count hidden">0</b></button>
     <button id="mobileMenuBtn">☰<span>Menu</span></button>
   </nav>
+
+  <div id="mobileSearchOverlay" class="mobile-search-overlay hidden">
+    <div class="mobile-search-head">
+      <button id="mobileSearchClose" class="icon-btn" aria-label="Chiudi ricerca">←</button>
+      <strong>Cerca</strong>
+    </div>
+
+    <div class="mobile-search-box">
+      <input
+        id="mobileSearchInput"
+        type="search"
+        placeholder="Cerca un contenuto..."
+        autocomplete="off"
+      >
+      <button id="mobileSearchSubmit" class="btn">Invia</button>
+    </div>
+  </div>
 
   <button class="chat-fab desktop-chat-fab" onclick="toggleUserChat()">💬<span id="userUnread" class="chat-count hidden">0</span></button>
 </div>

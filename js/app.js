@@ -3,7 +3,7 @@
 
 const db = window.supabaseClient;
 const state = {
-  users: [], categories: [], contents: [], plans: [], messages: [], activity: [],
+  users: [], categories: [], contents: [], plans: [], messages: [], activity: [], videoProgress: [],
   settings: { maintenance: false, admin_email: "", expired_message: "" }
 };
 let sessionUser = null;
@@ -12,6 +12,7 @@ let currentChatUserId = null;
 let activeFrontCategory = null;
 let messagesChannel = null;
 let activeChatRole = null;
+let audienceRefreshTimer = null;
 let activeChatUserId = null;
 let notificationAudioContext = null;
 let notificationSoundUnlocked = false;
@@ -261,10 +262,11 @@ async function loadCommonData() {
 }
 
 async function loadAdminData() {
-  const [usersRes, activityRes, messagesRes] = await Promise.all([
+  const [usersRes, activityRes, messagesRes, progressRes] = await Promise.all([
     db.from("profiles").select("*").eq("role", "user").order("updated_at", { ascending: false }),
-    db.from("activity").select("*").order("created_at", { ascending: false }).limit(12),
+    db.from("activity").select("*").order("created_at", { ascending: false }).limit(24),
     db.from("messages").select("*").order("created_at"),
+    db.from("video_progress").select("user_id, content_id, position_seconds, duration_seconds, completed, updated_at").order("updated_at", { ascending: false }).limit(1000)
   ]);
   if (usersRes.error) throw usersRes.error;
   if (activityRes.error) throw activityRes.error;
@@ -272,6 +274,8 @@ async function loadAdminData() {
   state.users = usersRes.data || [];
   state.activity = activityRes.data || [];
   state.messages = messagesRes.data || [];
+  // La dashboard continua a funzionare anche se la tabella analytics non è ancora accessibile.
+  state.videoProgress = progressRes.error ? [] : (progressRes.data || []);
 }
 
 async function refreshData() {
@@ -364,8 +368,24 @@ function showAdmin() {
   hideAll();
   $("adminShell").classList.remove("hidden");
   renderAll();
-  switchAdminView(currentAdminView || "dashboard");
   startMessagesRealtime();
+  startAudienceAutoRefresh();
+}
+
+function startAudienceAutoRefresh() {
+  if (audienceRefreshTimer) clearInterval(audienceRefreshTimer);
+  audienceRefreshTimer = setInterval(async () => {
+    if (sessionUser?.role !== "admin" || currentAdminView !== "dashboard" || document.hidden) return;
+    const { data, error } = await db
+      .from("video_progress")
+      .select("user_id, content_id, position_seconds, duration_seconds, completed, updated_at")
+      .order("updated_at", { ascending: false })
+      .limit(1000);
+    if (!error) {
+      state.videoProgress = data || [];
+      renderAudienceIntelligence();
+    }
+  }, 30000);
 }
 function showFrontend(user) {
   hideAll();
@@ -407,77 +427,27 @@ async function restoreSession() {
   }
 }
 
-function switchAdminView(viewName) {
-  const allowedViews = [
-    "dashboard",
-    "users",
-    "content",
-    "settings"
-  ];
-
-  if (!allowedViews.includes(viewName)) {
-    console.error("Sezione admin non valida:", viewName);
-    return;
-  }
-
-  currentAdminView = viewName;
-
-  allowedViews.forEach((name) => {
-    const section = $(`view-${name}`);
-    if (!section) return;
-
-    const active = name === viewName;
-
-    section.classList.toggle("hidden", !active);
-    section.hidden = !active;
-    section.style.display = active ? "block" : "none";
-    section.setAttribute("aria-hidden", String(!active));
-  });
-
-  document
-    .querySelectorAll(".nav button[data-view]")
-    .forEach((button) => {
-      const active = button.dataset.view === viewName;
-
-      button.classList.toggle("active", active);
-      button.setAttribute("aria-current", active ? "page" : "false");
-    });
-
+function switchAdminView(v) {
+  currentAdminView = v;
+  document.querySelectorAll("section[id^='view-']").forEach((s) => s.classList.add("hidden"));
+  $(`view-${v}`).classList.remove("hidden");
+  document.querySelectorAll(".nav button").forEach((b) => b.classList.toggle("active", b.dataset.view === v));
   const titles = {
-    dashboard: ["Dashboard", "Centro di controllo"],
-    users: ["Utenti", "Accessi e abbonamenti"],
-    content: ["Contenuti", "Categorie e archivio"],
-    settings: ["Impostazioni", "Profilo, piani e sistema"]
+    dashboard: ["Dashboard", "Centro di controllo"], users: ["Utenti", "Accessi e abbonamenti"],
+    content: ["Contenuti", "Categorie e archivio"], settings: ["Impostazioni", "Profilo, piani e sistema"]
   };
+  $("pageTitle").textContent = titles[v][0];
+  $("pageSubtitle").textContent = titles[v][1];
 
-  $("pageTitle").textContent = titles[viewName][0];
-  $("pageSubtitle").textContent = titles[viewName][1];
-
-  // Chiude realmente il drawer mobile/tablet.
   $("sidebar").classList.remove("open");
   $("adminMenuOverlay")?.classList.add("hidden");
   document.body.classList.remove("menu-open");
-
-  // Torna in alto nella nuova sezione.
-  const main = document.querySelector("#adminShell .main");
-
-  if (main) {
-    main.scrollTo({
-      top: 0,
-      behavior: "auto"
-    });
-  }
-
-  window.scrollTo({
-    top: 0,
-    behavior: "auto"
-  });
 }
 
 function renderAll() {
   if (!sessionUser) return;
   if (sessionUser.role === "admin") {
-    renderStats(); renderActivity(); renderUsers(); renderCategories(); renderContents(); renderSettings();
+    renderStats(); renderActivity(); renderAudienceIntelligence(); renderUsers(); renderCategories(); renderContents(); renderSettings();
   }
   renderUnread();
 }
@@ -494,6 +464,153 @@ function renderActivity() {
     ? state.activity.map((a) => `<div style="padding:10px 0;border-bottom:1px solid var(--line)"><b>${esc(a.text)}</b><div class="subtle">${new Date(a.created_at).toLocaleString("it-IT")}</div></div>`).join("")
     : "Nessuna attività registrata.";
 }
+
+
+function renderAudienceIntelligence() {
+  const progress = Array.isArray(state.videoProgress) ? state.videoProgress : [];
+  const now = Date.now();
+  const minutesAgo = (date) => (now - new Date(date).getTime()) / 60000;
+  const recent = progress.filter((item) => item.updated_at && minutesAgo(item.updated_at) <= 5);
+  const watching = recent.filter((item) => !item.completed && Number(item.position_seconds || 0) > 0);
+  const uniqueViewers = new Set(progress.map((item) => item.user_id).filter(Boolean)).size;
+  const validDurations = progress.filter((item) => Number(item.duration_seconds || 0) > 0);
+  const completionRate = validDurations.length
+    ? Math.round(validDurations.reduce((sum, item) => {
+        const ratio = item.completed ? 1 : Math.min(1, Number(item.position_seconds || 0) / Number(item.duration_seconds || 1));
+        return sum + ratio;
+      }, 0) / validDurations.length * 100)
+    : 0;
+
+  setText("aiOnlineNow", new Set(recent.map((item) => item.user_id).filter(Boolean)).size);
+  setText("aiWatchingNow", watching.length);
+  setText("aiUniqueViewers", uniqueViewers);
+  setText("aiCompletionRate", `${completionRate}%`);
+  setText("aiWatchingCount", `${watching.length} live`);
+  setText("audienceUpdated", `aggiornato ${new Date().toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" })}`);
+  setText("aiViewersNote", progress.length ? `${progress.length} sessioni registrate` : "In attesa dei primi dati");
+  setText("aiCompletionNote", validDurations.length ? `Su ${validDurations.length} visioni` : "In attesa dei primi dati");
+
+  renderAudienceChart(progress);
+  renderNowWatching(watching);
+  const ranking = buildContentRanking(progress);
+  renderContentRanking(ranking);
+  renderSmartInsights({ progress, watching, uniqueViewers, completionRate, ranking });
+}
+
+function setText(id, value) {
+  const node = $(id);
+  if (node) node.textContent = value;
+}
+
+function contentForAnalytics(contentId) {
+  return state.contents.find((content) => String(content.id) === String(contentId));
+}
+
+function userForAnalytics(userId) {
+  return state.users.find((user) => String(user.id) === String(userId));
+}
+
+function renderAudienceChart(progress) {
+  const chart = $("aiActivityChart");
+  if (!chart) return;
+  const now = Date.now();
+  const buckets = Array.from({ length: 24 }, () => 0);
+  progress.forEach((item) => {
+    const timestamp = new Date(item.updated_at).getTime();
+    const ageHours = Math.floor((now - timestamp) / 3600000);
+    if (ageHours >= 0 && ageHours < 24) buckets[23 - ageHours] += 1;
+  });
+  const max = Math.max(1, ...buckets);
+  chart.innerHTML = buckets.map((value, index) => {
+    const height = value ? Math.max(10, Math.round(value / max * 100)) : 3;
+    const hour = new Date(now - (23 - index) * 3600000).toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" });
+    return `<i class="ai-chart-bar" style="--h:${height}%" title="${hour}: ${value} attività"></i>`;
+  }).join("");
+  const lastSix = buckets.slice(-6).reduce((sum, value) => sum + value, 0);
+  const previousSix = buckets.slice(-12, -6).reduce((sum, value) => sum + value, 0);
+  const delta = previousSix ? Math.round((lastSix - previousSix) / previousSix * 100) : (lastSix ? 100 : 0);
+  setText("aiTrendBadge", delta > 0 ? `▲ ${delta}%` : delta < 0 ? `▼ ${Math.abs(delta)}%` : "Stabile");
+}
+
+function renderNowWatching(watching) {
+  const wrap = $("aiNowWatching");
+  if (!wrap) return;
+  const rows = watching.slice(0, 5);
+  wrap.className = rows.length ? "ai-list" : "ai-list empty compact-empty";
+  wrap.innerHTML = rows.length ? rows.map((item) => {
+    const content = contentForAnalytics(item.content_id);
+    const user = userForAnalytics(item.user_id);
+    const duration = Number(item.duration_seconds || 0);
+    const position = Number(item.position_seconds || 0);
+    const percent = duration ? Math.min(100, Math.round(position / duration * 100)) : 0;
+    const image = content?.preview || content?.cover;
+    return `<div class="ai-watch-row"><div class="ai-thumb">${image ? `<img src="${esc(image)}" alt="">` : "▶"}</div><div class="ai-row-copy"><b>${esc(content?.title || "Contenuto")}</b><small>${esc(user?.username || "Utente")} · ${percent}% visto</small><div class="ai-progress"><i style="--w:${percent}%"></i></div></div><div class="ai-row-value">ora</div></div>`;
+  }).join("") : "Nessuna visione negli ultimi 5 minuti.";
+}
+
+function buildContentRanking(progress) {
+  const map = new Map();
+  progress.forEach((item) => {
+    const key = String(item.content_id || "");
+    if (!key) return;
+    if (!map.has(key)) map.set(key, { contentId: key, sessions: 0, viewers: new Set(), totalRatio: 0, completed: 0, latest: 0 });
+    const row = map.get(key);
+    row.sessions += 1;
+    if (item.user_id) row.viewers.add(item.user_id);
+    const duration = Number(item.duration_seconds || 0);
+    row.totalRatio += item.completed ? 1 : (duration ? Math.min(1, Number(item.position_seconds || 0) / duration) : 0);
+    if (item.completed) row.completed += 1;
+    row.latest = Math.max(row.latest, new Date(item.updated_at || 0).getTime());
+  });
+  return [...map.values()].map((row) => ({
+    ...row,
+    uniqueViewers: row.viewers.size,
+    avgProgress: row.sessions ? Math.round(row.totalRatio / row.sessions * 100) : 0,
+    score: row.viewers.size * 4 + row.completed * 2 + row.totalRatio
+  })).sort((a, b) => b.score - a.score || b.latest - a.latest);
+}
+
+function renderContentRanking(ranking) {
+  const wrap = $("aiTopContents");
+  if (!wrap) return;
+  const rows = ranking.slice(0, 5);
+  const maxScore = Math.max(1, ...rows.map((row) => row.score));
+  wrap.className = rows.length ? "ai-ranking" : "ai-ranking empty compact-empty";
+  wrap.innerHTML = rows.length ? rows.map((row, index) => {
+    const content = contentForAnalytics(row.contentId);
+    const width = Math.max(8, Math.round(row.score / maxScore * 100));
+    return `<div class="ai-rank-row"><div class="ai-rank-num">${String(index + 1).padStart(2, "0")}</div><div class="ai-row-copy"><b>${esc(content?.title || "Contenuto non disponibile")}</b><small>${row.uniqueViewers} spettatori · ${row.avgProgress}% medio</small><div class="ai-progress"><i style="--w:${width}%"></i></div></div><div class="ai-row-value">${row.sessions}</div></div>`;
+  }).join("") : "Non ci sono ancora dati di visione.";
+}
+
+function renderSmartInsights({ progress, watching, uniqueViewers, completionRate, ranking }) {
+  const wrap = $("aiInsights");
+  if (!wrap) return;
+  const insights = [];
+  const top = ranking[0];
+  if (top) {
+    const content = contentForAnalytics(top.contentId);
+    insights.push({ icon: "↗", title: "Contenuto trainante", text: `${content?.title || "Il contenuto in testa"} guida l’interesse con ${top.uniqueViewers} spettatori unici e una progressione media del ${top.avgProgress}%.` });
+  }
+  if (watching.length) {
+    const liveIds = new Set(watching.map((item) => item.content_id));
+    insights.push({ icon: "●", title: "Interesse in tempo reale", text: `${watching.length} ${watching.length === 1 ? "utente sta" : "utenti stanno"} guardando ${liveIds.size} ${liveIds.size === 1 ? "contenuto" : "contenuti"} negli ultimi cinque minuti.` });
+  }
+  if (progress.length && completionRate < 45) {
+    insights.push({ icon: "!", title: "Retention da migliorare", text: `Il completamento medio è del ${completionRate}%. Valuta intro più rapide, descrizioni più precise o contenuti correlati.` });
+  } else if (progress.length && completionRate >= 70) {
+    insights.push({ icon: "✓", title: "Ottima retention", text: `Il completamento medio del ${completionRate}% indica un pubblico molto coinvolto. Promuovi i titoli con performance simili.` });
+  }
+  if (!progress.length) {
+    insights.push({ icon: "◎", title: "Analytics in ascolto", text: "Gli insight compariranno automaticamente appena gli utenti inizieranno o riprenderanno un contenuto." });
+  } else if (uniqueViewers && ranking.length > 1) {
+    const second = ranking[1];
+    const content = contentForAnalytics(second.contentId);
+    insights.push({ icon: "✦", title: "Opportunità editoriale", text: `Affianca ${content?.title || "il secondo titolo"} al contenuto principale: è già tra le preferenze del pubblico attivo.` });
+  }
+  wrap.innerHTML = insights.slice(0, 4).map((item) => `<div class="ai-insight"><span class="ai-insight-icon">${item.icon}</span><div><b>${esc(item.title)}</b><p>${esc(item.text)}</p></div></div>`).join("");
+}
+
 function trialInfo(u) {
   if (u.plan !== "Trial") return "";
   const left = 30 - daysBetween(u.created_at, new Date());
@@ -2303,22 +2420,7 @@ $("mobileSearchInput")?.addEventListener(
   }
 );
 
-document
-  .querySelectorAll(".nav button[data-view]")
-  .forEach((button) => {
-    button.type = "button";
-
-    button.addEventListener(
-      "click",
-      (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-
-        switchAdminView(button.dataset.view);
-      },
-      { capture: true }
-    );
-  });
+document.querySelectorAll(".nav button[data-view]").forEach((b) => b.onclick = () => switchAdminView(b.dataset.view));
 $("userSearch").oninput = renderUsers; $("userFilter").onchange = renderUsers;
 $("addUserBtn").onclick = () => openUserModal();
 $("addCategoryBtn").onclick = () => openCategoryModal();
