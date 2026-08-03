@@ -417,7 +417,10 @@ function switchAdminView(v) {
   };
   $("pageTitle").textContent = titles[v][0];
   $("pageSubtitle").textContent = titles[v][1];
+
   $("sidebar").classList.remove("open");
+  $("adminMenuOverlay")?.classList.add("hidden");
+  document.body.classList.remove("menu-open");
 }
 
 function renderAll() {
@@ -1030,12 +1033,35 @@ function updateFullscreenButton() {
     : "Schermo intero";
 }
 
-async function togglePlayerFullscreen() {
+async function togglePlayerFullscreen(event) {
+  event?.preventDefault();
+  event?.stopPropagation();
+
   const player = $("customVideoPlayer");
   if (!player) return;
 
+  const mobileOrTablet = window.matchMedia(
+    "(max-width: 1024px)"
+  ).matches;
+
   const pseudoFullscreen =
     player.classList.contains("mobile-fullscreen");
+
+  if (mobileOrTablet) {
+    player.classList.toggle(
+      "mobile-fullscreen",
+      !pseudoFullscreen
+    );
+
+    document.body.classList.toggle(
+      "video-fullscreen-open",
+      !pseudoFullscreen
+    );
+
+    updateFullscreenButton();
+    showPlayerControls();
+    return;
+  }
 
   try {
     if (
@@ -1050,43 +1076,13 @@ async function togglePlayerFullscreen() {
       return;
     }
 
-    if (pseudoFullscreen) {
-      player.classList.remove("mobile-fullscreen");
-      document.body.classList.remove("video-fullscreen-open");
-      updateFullscreenButton();
-      return;
-    }
-
     if (player.requestFullscreen) {
       await player.requestFullscreen();
-      return;
-    }
-
-    if (player.webkitRequestFullscreen) {
+    } else if (player.webkitRequestFullscreen) {
       player.webkitRequestFullscreen();
-      return;
     }
-
-    if (
-      activeVideoElement &&
-      typeof activeVideoElement.webkitEnterFullscreen === "function"
-    ) {
-      activeVideoElement.webkitEnterFullscreen();
-      return;
-    }
-
-    player.classList.add("mobile-fullscreen");
-    document.body.classList.add("video-fullscreen-open");
-    updateFullscreenButton();
   } catch (error) {
-    console.warn(
-      "Fullscreen nativo non disponibile, attivo il fallback mobile:",
-      error
-    );
-
-    player.classList.add("mobile-fullscreen");
-    document.body.classList.add("video-fullscreen-open");
-    updateFullscreenButton();
+    console.warn("Fullscreen non disponibile:", error);
   }
 }
 
@@ -1151,6 +1147,17 @@ function bindCustomPlayerControls({
   const playerWrap = $("customVideoPlayer");
   const videoMount = $("videoMount");
   const seekPreview = $("videoSeekPreview");
+  const controls = playerWrap.querySelector(
+    ".custom-video-controls"
+  );
+
+  controls?.addEventListener("click", (event) => {
+    event.stopPropagation();
+  });
+
+  controls?.addEventListener("pointerdown", (event) => {
+    event.stopPropagation();
+  });
 
   const togglePlayback = () => {
     if (isPlaying()) pause();
@@ -1190,7 +1197,9 @@ function bindCustomPlayerControls({
     seekPreview.classList.add("hidden");
   };
 
-  fullscreenButton.onclick = togglePlayerFullscreen;
+  fullscreenButton.onclick = (event) => {
+    togglePlayerFullscreen(event);
+  };
 
   playerWrap.addEventListener("mousemove", showPlayerControls);
   playerWrap.addEventListener("pointerdown", showPlayerControls);
@@ -2138,48 +2147,110 @@ $("frontMenuClose").onclick = closeFrontMobileMenu;
 $("frontMenuOverlay").onclick = closeFrontMobileMenu;
 $("mobileMenuBtn").onclick = openFrontMobileMenu;
 
-function openMobileSearch() {
-  $("mobileSearchOverlay").classList.remove("hidden");
+function openMobileSearch(event) {
+  event?.preventDefault();
+  event?.stopPropagation();
+
+  const overlay = $("mobileSearchOverlay");
+  overlay.classList.remove("hidden");
+  overlay.classList.add("open");
   document.body.classList.add("menu-open");
 
-  setTimeout(() => {
-    $("mobileSearchInput").focus();
-  }, 50);
+  const input = $("mobileSearchInput");
+  input.value = "";
+
+  requestAnimationFrame(() => input.focus());
 }
 
 function closeMobileSearch() {
-  $("mobileSearchOverlay").classList.add("hidden");
+  const overlay = $("mobileSearchOverlay");
+  overlay.classList.remove("open");
+  overlay.classList.add("hidden");
   document.body.classList.remove("menu-open");
+}
+
+function renderSearchResults(query) {
+  const normalized = query.toLowerCase().trim();
+
+  const results = availableContents().filter((content) => {
+    const searchable = [
+      content.title,
+      content.description
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+
+    return searchable.includes(normalized);
+  });
+
+  activeFrontCategory = null;
+
+  $("frontMain").innerHTML = `
+    <div class="search-results-head">
+      <button id="searchResultsBack" class="icon-btn">
+        ← Indietro
+      </button>
+
+      <div>
+        <span class="badge gold">RISULTATI</span>
+        <h1>Ricerca: ${esc(query)}</h1>
+      </div>
+    </div>
+
+    ${
+      results.length
+        ? `<div class="front-grid">${frontCards(results)}</div>`
+        : '<div class="empty">Nessun risultato trovato.</div>'
+    }
+  `;
+
+  $("searchResultsBack").onclick = showFrontHome;
 }
 
 function submitMobileSearch() {
   const value = $("mobileSearchInput").value.trim();
 
-  if (!value) return;
+  if (!value) {
+    $("mobileSearchInput").focus();
+    return;
+  }
 
   $("frontSearch").value = value;
   closeMobileSearch();
+  closeFrontMobileMenu();
+  renderSearchResults(value);
 
-  $("frontSearch").dispatchEvent(
-    new Event("input", { bubbles: true })
-  );
-
-  $("frontMain").scrollIntoView({
-    behavior: "smooth",
-    block: "start"
+  window.scrollTo({
+    top: 0,
+    behavior: "smooth"
   });
 }
 
-$("mobileSearchBtn").onclick = openMobileSearch;
-$("mobileSearchClose").onclick = closeMobileSearch;
-$("mobileSearchSubmit").onclick = submitMobileSearch;
+$("mobileSearchBtn")?.addEventListener(
+  "click",
+  openMobileSearch
+);
 
-$("mobileSearchInput").addEventListener("keydown", (event) => {
-  if (event.key === "Enter") {
-    event.preventDefault();
-    submitMobileSearch();
+$("mobileSearchClose")?.addEventListener(
+  "click",
+  closeMobileSearch
+);
+
+$("mobileSearchSubmit")?.addEventListener(
+  "click",
+  submitMobileSearch
+);
+
+$("mobileSearchInput")?.addEventListener(
+  "keydown",
+  (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      submitMobileSearch();
+    }
   }
-});
+);
 
 document.querySelectorAll(".nav button[data-view]").forEach((b) => b.onclick = () => switchAdminView(b.dataset.view));
 $("userSearch").oninput = renderUsers; $("userFilter").onchange = renderUsers;

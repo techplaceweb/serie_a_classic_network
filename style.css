@@ -1695,3 +1695,85 @@ body.menu-open {
     padding: 24px 19px !important;
   }
 }
+
+
+/* ============================================================
+   FIX V2 — FULLSCREEN, RICERCA MOBILE, SIDEBAR ADMIN
+   ============================================================ */
+
+.custom-video-controls {
+  position: relative;
+  z-index: 20;
+}
+
+.youtube-interaction-blocker {
+  z-index: 5;
+}
+
+@media (max-width: 1024px) {
+  .mobile-search-overlay {
+    position: fixed !important;
+    inset: 0 !important;
+    z-index: 1000 !important;
+    display: block;
+    width: 100vw !important;
+    height: 100dvh !important;
+    padding:
+      calc(18px + env(safe-area-inset-top))
+      18px
+      calc(18px + env(safe-area-inset-bottom)) !important;
+    background: #000 !important;
+    color: #fff;
+    pointer-events: auto !important;
+  }
+
+  .mobile-search-overlay.hidden {
+    display: none !important;
+  }
+
+  .mobile-search-overlay.open {
+    display: block !important;
+  }
+
+  .mobile-search-box input {
+    background: #111 !important;
+    color: #fff !important;
+    border-color: rgba(255,255,255,.22) !important;
+  }
+
+  .mobile-search-box input::placeholder {
+    color: rgba(255,255,255,.58);
+  }
+
+  .search-results-head {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+    margin-bottom: 22px;
+  }
+
+  #sidebar {
+    z-index: 100 !important;
+    pointer-events: auto !important;
+  }
+
+  #sidebar .nav,
+  #sidebar .nav button {
+    position: relative;
+    z-index: 102;
+    pointer-events: auto !important;
+  }
+
+  #adminMenuOverlay {
+    z-index: 90 !important;
+  }
+
+  .custom-video-player.mobile-fullscreen {
+    z-index: 1200 !important;
+  }
+
+  .custom-video-player.mobile-fullscreen
+  .custom-video-controls {
+    z-index: 30 !important;
+  }
+}
