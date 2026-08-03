@@ -3,7 +3,7 @@
 
 const db = window.supabaseClient;
 const state = {
-  users: [], categories: [], contents: [], plans: [], messages: [], activity: [], videoProgress: [],
+  users: [], categories: [], contents: [], plans: [], messages: [], activity: [], videoProgress: [], livePresence: [],
   settings: { maintenance: false, admin_email: "", expired_message: "" }
 };
 let sessionUser = null;
@@ -13,6 +13,8 @@ let activeFrontCategory = null;
 let messagesChannel = null;
 let activeChatRole = null;
 let audienceRefreshTimer = null;
+let audiencePresenceChannel = null;
+let audiencePresenceHeartbeat = null;
 let activeChatUserId = null;
 let notificationAudioContext = null;
 let notificationSoundUnlocked = false;
@@ -355,6 +357,7 @@ async function logout() {
   await persistActiveVideoProgress();
   destroyActiveVideo();
   stopMessagesRealtime();
+  stopAudiencePresence();
   await db.auth.signOut();
   sessionUser = null;
   location.reload();
@@ -369,6 +372,7 @@ function showAdmin() {
   $("adminShell").classList.remove("hidden");
   renderAll();
   startMessagesRealtime();
+  startAudiencePresence();
   startAudienceAutoRefresh();
 }
 
@@ -395,6 +399,7 @@ function showFrontend(user) {
   renderFrontend();
   showFrontHome();
   startMessagesRealtime();
+  startAudiencePresence();
 }
 function showMaintenance() {
   hideAll();
@@ -471,7 +476,17 @@ function renderAudienceIntelligence() {
   const now = Date.now();
   const minutesAgo = (date) => (now - new Date(date).getTime()) / 60000;
   const recent = progress.filter((item) => item.updated_at && minutesAgo(item.updated_at) <= 5);
-  const watching = recent.filter((item) => !item.completed && Number(item.position_seconds || 0) > 0);
+  const presence = (state.livePresence || []).filter((item) => {
+    if (!item.last_seen) return true;
+    return minutesAgo(item.last_seen) <= 2;
+  });
+  const onlineUsers = new Map();
+  presence.forEach((item) => {
+    if (item.user_id) onlineUsers.set(String(item.user_id), item);
+  });
+  const watchingPresence = [...onlineUsers.values()].filter((item) => item.page === "watching" || item.content_id);
+  const watchingFromProgress = recent.filter((item) => !item.completed && Number(item.position_seconds || 0) > 0);
+  const watching = watchingPresence.length ? watchingPresence : watchingFromProgress;
   const uniqueViewers = new Set(progress.map((item) => item.user_id).filter(Boolean)).size;
   const validDurations = progress.filter((item) => Number(item.duration_seconds || 0) > 0);
   const completionRate = validDurations.length
@@ -481,7 +496,7 @@ function renderAudienceIntelligence() {
       }, 0) / validDurations.length * 100)
     : 0;
 
-  setText("aiOnlineNow", new Set(recent.map((item) => item.user_id).filter(Boolean)).size);
+  setText("aiOnlineNow", onlineUsers.size || new Set(recent.map((item) => item.user_id).filter(Boolean)).size);
   setText("aiWatchingNow", watching.length);
   setText("aiUniqueViewers", uniqueViewers);
   setText("aiCompletionRate", `${completionRate}%`);
@@ -490,7 +505,7 @@ function renderAudienceIntelligence() {
   setText("aiViewersNote", progress.length ? `${progress.length} sessioni registrate` : "In attesa dei primi dati");
   setText("aiCompletionNote", validDurations.length ? `Su ${validDurations.length} visioni` : "In attesa dei primi dati");
 
-  renderAudienceChart(progress);
+  renderAudienceChart(progress, presence);
   renderNowWatching(watching);
   const ranking = buildContentRanking(progress);
   renderContentRanking(ranking);
@@ -506,11 +521,93 @@ function contentForAnalytics(contentId) {
   return state.contents.find((content) => String(content.id) === String(contentId));
 }
 
+
+
+function flattenPresenceState(presenceState) {
+  return Object.values(presenceState || {})
+    .flat()
+    .filter((entry) => entry && entry.role === "user");
+}
+
+function currentPresencePayload() {
+  const content = activeVideoContentId
+    ? contentForAnalytics(activeVideoContentId)
+    : null;
+  return {
+    user_id: sessionUser?.id || null,
+    username: sessionUser?.username || "Utente",
+    role: sessionUser?.role || null,
+    page: activeVideoContentId ? "watching" : "browsing",
+    content_id: activeVideoContentId || null,
+    content_title: content?.title || null,
+    playing: Boolean(
+      activeVideoElement
+        ? !activeVideoElement.paused && !activeVideoElement.ended
+        : activeVideoPlayer &&
+          typeof activeVideoPlayer.getPlayerState === "function" &&
+          activeVideoPlayer.getPlayerState() === window.YT?.PlayerState?.PLAYING
+    ),
+    last_seen: new Date().toISOString()
+  };
+}
+
+async function publishAudiencePresence() {
+  if (!audiencePresenceChannel || !sessionUser) return;
+  try {
+    await audiencePresenceChannel.track(currentPresencePayload());
+  } catch (error) {
+    console.warn("Presence live non aggiornata:", error);
+  }
+}
+
+function startAudiencePresence() {
+  if (!sessionUser || audiencePresenceChannel) return;
+
+  const presenceKey = `${sessionUser.id}:${crypto?.randomUUID?.() || Math.random().toString(36).slice(2)}`;
+  audiencePresenceChannel = db.channel("audience-live-v1", {
+    config: { presence: { key: presenceKey } }
+  });
+
+  audiencePresenceChannel
+    .on("presence", { event: "sync" }, () => {
+      state.livePresence = flattenPresenceState(audiencePresenceChannel.presenceState());
+      if (sessionUser?.role === "admin") renderAudienceIntelligence();
+    })
+    .on("presence", { event: "join" }, () => {
+      state.livePresence = flattenPresenceState(audiencePresenceChannel.presenceState());
+      if (sessionUser?.role === "admin") renderAudienceIntelligence();
+    })
+    .on("presence", { event: "leave" }, () => {
+      state.livePresence = flattenPresenceState(audiencePresenceChannel.presenceState());
+      if (sessionUser?.role === "admin") renderAudienceIntelligence();
+    })
+    .subscribe(async (status) => {
+      if (status === "SUBSCRIBED") await publishAudiencePresence();
+    });
+
+  audiencePresenceHeartbeat = setInterval(publishAudiencePresence, 15000);
+  document.addEventListener("visibilitychange", publishAudiencePresence);
+  window.addEventListener("beforeunload", () => {
+    try { audiencePresenceChannel?.untrack(); } catch (_) {}
+  });
+}
+
+function stopAudiencePresence() {
+  if (audiencePresenceHeartbeat) clearInterval(audiencePresenceHeartbeat);
+  audiencePresenceHeartbeat = null;
+  if (audiencePresenceChannel) {
+    try { audiencePresenceChannel.untrack(); } catch (_) {}
+    db.removeChannel(audiencePresenceChannel);
+  }
+  audiencePresenceChannel = null;
+  state.livePresence = [];
+}
+
 function userForAnalytics(userId) {
   return state.users.find((user) => String(user.id) === String(userId));
 }
 
-function renderAudienceChart(progress) {
+function renderAudienceChart(progress, presence = []) {
   const chart = $("aiActivityChart");
   if (!chart) return;
   const now = Date.now();
@@ -520,6 +617,7 @@ function renderAudienceChart(progress) {
     const ageHours = Math.floor((now - timestamp) / 3600000);
     if (ageHours >= 0 && ageHours < 24) buckets[23 - ageHours] += 1;
   });
+  if (presence.length) buckets[23] += presence.length;
   const max = Math.max(1, ...buckets);
   chart.innerHTML = buckets.map((value, index) => {
     const height = value ? Math.max(10, Math.round(value / max * 100)) : 3;
@@ -543,8 +641,11 @@ function renderNowWatching(watching) {
     const duration = Number(item.duration_seconds || 0);
     const position = Number(item.position_seconds || 0);
     const percent = duration ? Math.min(100, Math.round(position / duration * 100)) : 0;
+    const title = item.content_title || content?.title || "Contenuto";
+    const username = item.username || user?.username || "Utente";
     const image = content?.preview || content?.cover;
-    return `<div class="ai-watch-row"><div class="ai-thumb">${image ? `<img src="${esc(image)}" alt="">` : "▶"}</div><div class="ai-row-copy"><b>${esc(content?.title || "Contenuto")}</b><small>${esc(user?.username || "Utente")} · ${percent}% visto</small><div class="ai-progress"><i style="--w:${percent}%"></i></div></div><div class="ai-row-value">ora</div></div>`;
+    const detail = item.page === "watching" ? (item.playing ? "in riproduzione" : "pagina contenuto") : `${percent}% visto`;
+    return `<div class="ai-watch-row"><div class="ai-thumb">${image ? `<img src="${esc(image)}" alt="">` : "▶"}</div><div class="ai-row-copy"><b>${esc(title)}</b><small>${esc(username)} · ${esc(detail)}</small><div class="ai-progress"><i style="--w:${percent || (item.playing ? 18 : 5)}%"></i></div></div><div class="ai-row-value">ora</div></div>`;
   }).join("") : "Nessuna visione negli ultimi 5 minuti.";
 }
 
@@ -1095,6 +1196,7 @@ function destroyActiveVideo() {
 
   activeVideoPlayer = null;
   activeVideoContentId = null;
+  publishAudiencePresence();
 }
 
 async function leaveActiveVideo() {
@@ -1613,6 +1715,7 @@ function renderVideoPlayerShell(content) {
 async function startYouTubePlayback(content, videoId, startSeconds) {
   renderVideoPlayerShell(content);
   activeVideoContentId = content.id;
+  publishAudiencePresence();
 
   $("videoMount").classList.add("youtube-mode");
   $("videoMount").innerHTML = `
@@ -1708,6 +1811,7 @@ async function startYouTubePlayback(content, videoId, startSeconds) {
 function startNativePlayback(content, url, startSeconds) {
   renderVideoPlayerShell(content);
   activeVideoContentId = content.id;
+  publishAudiencePresence();
 
   $("videoMount").classList.remove("youtube-mode");
   $("videoMount").innerHTML = `
