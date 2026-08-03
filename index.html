@@ -22,7 +22,7 @@
 <div id="maintenanceScreen" class="maintenance-screen hidden"><div class="notice-card"><div class="brand"><img src="logo.png" alt="Serie A Classic"><span>Network</span></div><h1>Piattaforma in manutenzione</h1><p class="subtle">Riprova più tardi o contatta l’admin.</p><a id="maintenanceMail" class="btn" style="display:inline-block;text-decoration:none">Contatta l’admin</a></div></div>
 <div id="expiredScreen" class="expired-screen hidden"><div class="notice-card"><h1>Il tuo periodo di prova è scaduto</h1><p class="subtle">Per continuare a goderti l’esperienza nostalgica, diventa abbonato.</p><a id="expiredContact" class="btn" style="display:inline-block;text-decoration:none">Diventa Abbonato</a><button class="btn secondary" style="margin-left:8px" onclick="logout()">Esci</button></div></div>
 
-<div id="adminShell" class="shell hidden">
+<div id="adminShell" class="shell hidden"><div id="adminMenuOverlay" class="menu-overlay hidden"></div>
 <aside id="sidebar" class="sidebar">
   <div class="brand"><img src="logo.png" alt="Serie A Classic"><span>Network</span></div><div class="tricolore"><i></i><i></i><i></i></div>
   <nav class="nav">
@@ -55,9 +55,40 @@
 </div>
 
 <div id="frontShell" class="front-shell hidden">
-  <header class="front-top"><div class="brand"><img src="logo.png" alt="Serie A Classic"><span>Network</span></div><div style="display:flex;gap:10px;align-items:center"><input id="frontSearch" class="searchbar" placeholder="Cerca un contenuto..."><span id="frontUserBadge" class="badge gold"></span><button class="icon-btn" onclick="logout()">Esci</button></div></header>
-  <div class="front-body"><aside class="front-side"><button id="frontHomeBtn" class="active" onclick="showFrontHome()">⌂ Home</button><div id="frontCategories"></div></aside><main id="frontMain" class="front-main"></main></div>
-  <button class="chat-fab" onclick="toggleUserChat()">💬<span id="userUnread" class="chat-count hidden">0</span></button>
+  <div id="frontMenuOverlay" class="menu-overlay hidden"></div>
+
+  <header class="front-top">
+    <button id="frontMenuToggle" class="icon-btn front-menu-toggle" aria-label="Apri menu" aria-expanded="false">☰</button>
+    <div class="brand"><img src="logo.png" alt="Serie A Classic"><span>Network</span></div>
+
+    <div class="front-actions">
+      <input id="frontSearch" class="searchbar" placeholder="Cerca un contenuto...">
+      <span id="frontUserBadge" class="badge gold"></span>
+      <button class="icon-btn" onclick="logout()">Esci</button>
+    </div>
+  </header>
+
+  <div class="front-body">
+    <aside id="frontSidebar" class="front-side">
+      <div class="front-drawer-head">
+        <div class="brand"><img src="logo.png" alt="Serie A Classic"><span>Network</span></div>
+        <button id="frontMenuClose" class="icon-btn" aria-label="Chiudi menu">✕</button>
+      </div>
+      <button id="frontHomeBtn" class="active" onclick="showFrontHome()">⌂ Home</button>
+      <div id="frontCategories"></div>
+    </aside>
+
+    <main id="frontMain" class="front-main"></main>
+  </div>
+
+  <nav class="mobile-bottom-nav" aria-label="Navigazione mobile">
+    <button id="mobileHomeBtn" onclick="showFrontHome()">⌂<span>Home</span></button>
+    <button id="mobileSearchBtn">⌕<span>Cerca</span></button>
+    <button onclick="toggleUserChat()">💬<span>Chat</span><b id="mobileUnread" class="mobile-nav-count hidden">0</b></button>
+    <button id="mobileMenuBtn">☰<span>Menu</span></button>
+  </nav>
+
+  <button class="chat-fab desktop-chat-fab" onclick="toggleUserChat()">💬<span id="userUnread" class="chat-count hidden">0</span></button>
 </div>
 
 <div id="modalRoot"></div><div id="chatRoot"></div><div id="toast" class="toast hidden"></div>

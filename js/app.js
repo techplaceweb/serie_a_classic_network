@@ -728,13 +728,14 @@ function renderFrontend() {
 }
 function frontCards(arr) { return `<div class="front-grid">${arr.map((c) => `<div class="content-card" onclick="openFrontContent('${c.id}')" style="cursor:pointer"><div class="thumb">${c.preview ? `<img src="${c.preview}" alt="">` : "Anteprima"}</div><div class="content-body"><h3>${esc(c.title)}</h3></div></div>`).join("")}</div>`; }
 function showFrontHome() {
+  closeFrontMobileMenu();
   activeFrontCategory = null; document.querySelectorAll(".front-side button").forEach((b) => b.classList.remove("active")); $("frontHomeBtn")?.classList.add("active");
   const arr = availableContents(), latest = arr[0], heroStyle = latest?.cover ? ` style="background:linear-gradient(90deg,rgba(4,8,6,.92),rgba(4,8,6,.25)),url('${latest.cover.replace(/'/g, "%27")}') center/cover no-repeat"` : "";
   $("frontMain").innerHTML = `<div class="hero"${heroStyle}>${latest ? `<div><span class="badge gold">In Evidenza</span><h1>${esc(latest.title)}</h1><p>${esc(latest.description || "")}</p><button class="btn" onclick="openFrontContent('${latest.id}')">GUARDA ORA</button></div>` : `<div><span class="badge gold">SERIE A CLASSIC</span><h1>Benvenuto ${esc(sessionUser.username)}</h1><p>Rivivi il calcio italiano della Golden Era.</p></div>`}</div><div class="section-head" style="margin-top:28px"><h2>Aggiunti di recente</h2></div>${arr.length ? frontCards(arr) : '<div class="empty">Nessun contenuto disponibile.</div>'}`;
 }
 window.showFrontHome = showFrontHome;
 window.toggleFrontChildren = (id, e) => { e?.stopPropagation(); document.querySelectorAll(`.child-cat[data-parent="${id}"]`).forEach((el) => el.classList.toggle("visible")); };
-window.selectFrontCategory = (id) => { activeFrontCategory = id; document.querySelectorAll(".front-side button").forEach((b) => b.classList.remove("active")); $(`front-cat-${id}`)?.classList.add("active"); showCategory(id); };
+window.selectFrontCategory = (id) => { closeFrontMobileMenu(); activeFrontCategory = id; document.querySelectorAll(".front-side button").forEach((b) => b.classList.remove("active")); $(`front-cat-${id}`)?.classList.add("active"); showCategory(id); };
 window.showCategory = (id) => { const cat = state.categories.find((c) => c.id === id), arr = availableContents().filter((c) => c.category_ids?.includes(id)); $("frontMain").innerHTML = `<div class="section-head"><div><h1>${esc(cat?.name || "Categoria")}</h1><div class="subtle">Contenuti ordinati dal più recente.</div></div></div>${arr.length ? frontCards(arr) : '<div class="empty">Nessun contenuto in questa categoria.</div>'}`; };
 window.openFrontContent = (id) => { const c = availableContents().find((x) => x.id === id); if (!c) return; let safeUrl = normalizeVideoUrl(c.url); if (safeUrl.includes("youtube.com/embed/")) safeUrl = safeUrl.replace("youtube.com/embed/", "youtube-nocookie.com/embed/"); let embed = !safeUrl ? '<div class="empty">URL video non disponibile.</div>' : /\.mp4($|\?)/i.test(safeUrl) ? `<video src="${esc(safeUrl)}" controls playsinline></video>` : `<iframe src="${esc(safeUrl + (safeUrl.includes("?") ? "&" : "?") + "rel=0&modestbranding=1&iv_load_policy=3&playsinline=1")}" title="${esc(c.title)}" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>`; $("frontMain").innerHTML = `<button class="icon-btn" onclick="showFrontHome()">← Indietro</button><div class="video-head"><h1>${esc(c.title)}</h1><p class="subtle">${esc(c.description || "")}</p></div><div class="video-view">${embed}</div>`; };
 
@@ -768,6 +769,11 @@ function renderUnread() {
 
     $("userUnread").textContent = count;
     $("userUnread").classList.toggle("hidden", !count);
+
+    if ($("mobileUnread")) {
+      $("mobileUnread").textContent = count;
+      $("mobileUnread").classList.toggle("hidden", !count);
+    }
   }
 }
 
@@ -1074,7 +1080,46 @@ function exportData() {
 // Eventi
 $("loginBtn").onclick = attemptLogin;
 $("loginPass").addEventListener("keydown", (e) => e.key === "Enter" && attemptLogin());
-$("mobileToggle").onclick = () => $("sidebar").classList.toggle("open");
+
+function openAdminMobileMenu() {
+  $("sidebar").classList.add("open");
+  $("adminMenuOverlay").classList.remove("hidden");
+  document.body.classList.add("menu-open");
+}
+
+function closeAdminMobileMenu() {
+  $("sidebar").classList.remove("open");
+  $("adminMenuOverlay").classList.add("hidden");
+  document.body.classList.remove("menu-open");
+}
+
+function openFrontMobileMenu() {
+  $("frontSidebar").classList.add("open");
+  $("frontMenuOverlay").classList.remove("hidden");
+  $("frontMenuToggle").setAttribute("aria-expanded", "true");
+  document.body.classList.add("menu-open");
+}
+
+function closeFrontMobileMenu() {
+  $("frontSidebar").classList.remove("open");
+  $("frontMenuOverlay").classList.add("hidden");
+  $("frontMenuToggle").setAttribute("aria-expanded", "false");
+  document.body.classList.remove("menu-open");
+}
+
+$("mobileToggle").onclick = openAdminMobileMenu;
+$("adminMenuOverlay").onclick = closeAdminMobileMenu;
+
+$("frontMenuToggle").onclick = openFrontMobileMenu;
+$("frontMenuClose").onclick = closeFrontMobileMenu;
+$("frontMenuOverlay").onclick = closeFrontMobileMenu;
+$("mobileMenuBtn").onclick = openFrontMobileMenu;
+
+$("mobileSearchBtn").onclick = () => {
+  $("frontSearch").focus();
+  $("frontSearch").scrollIntoView({ behavior: "smooth", block: "center" });
+};
+
 document.querySelectorAll(".nav button[data-view]").forEach((b) => b.onclick = () => switchAdminView(b.dataset.view));
 $("userSearch").oninput = renderUsers; $("userFilter").onchange = renderUsers;
 $("addUserBtn").onclick = () => openUserModal();
@@ -1089,3 +1134,10 @@ $("resetBtn").onclick = () => toast("L'azzeramento completo è disattivato per e
 $("frontSearch").oninput = () => { const q = $("frontSearch").value.toLowerCase().trim(); if (!q) return showFrontHome(); const arr = availableContents().filter((c) => c.title.toLowerCase().includes(q)); $("frontMain").innerHTML = `<h1>Risultati ricerca</h1>${arr.length ? frontCards(arr) : '<div class="empty">Nessun risultato.</div>'}`; };
 
 restoreSession();
+
+
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  closeAdminMobileMenu();
+  closeFrontMobileMenu();
+});
