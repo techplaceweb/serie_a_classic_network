@@ -1053,9 +1053,19 @@ async function startYouTubePlayback(content, videoId, startSeconds) {
   renderVideoPlayerShell(content);
   activeVideoContentId = content.id;
 
+  $("videoMount").classList.add("youtube-mode");
+  $("videoMount").innerHTML = `
+    <div id="youtubePlayerMount" class="youtube-player-frame"></div>
+    <div
+      class="youtube-interaction-blocker"
+      aria-hidden="true"
+      title=""
+    ></div>
+  `;
+
   await loadYouTubeIframeApi();
 
-  activeVideoPlayer = new window.YT.Player("videoMount", {
+  activeVideoPlayer = new window.YT.Player("youtubePlayerMount", {
     videoId,
     width: "100%",
     height: "100%",
@@ -1124,6 +1134,7 @@ function startNativePlayback(content, url, startSeconds) {
   renderVideoPlayerShell(content);
   activeVideoContentId = content.id;
 
+  $("videoMount").classList.remove("youtube-mode");
   $("videoMount").innerHTML = `
     <video
       id="nativeVideoPlayer"

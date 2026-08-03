@@ -1200,3 +1200,34 @@ body.menu-open {
     justify-self: center;
   }
 }
+
+
+/* ============================================================
+   YOUTUBE: BLOCCA LE INTERAZIONI DIRETTE SUL PLAYER
+   ============================================================ */
+
+.video-mount.youtube-mode {
+  position: relative;
+  overflow: hidden;
+}
+
+.youtube-player-frame,
+.youtube-player-frame iframe {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+.youtube-interaction-blocker {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  background: transparent;
+  cursor: default;
+  pointer-events: auto;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
