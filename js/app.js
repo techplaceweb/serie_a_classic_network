@@ -21,6 +21,7 @@ let activeVideoElement = null;
 let activeVideoContentId = null;
 let activeVideoProgressTimer = null;
 let youtubeOverlayTimer = null;
+let playerControlsHideTimer = null;
 let youtubeApiPromise = null;
 
 const $ = (id) => document.getElementById(id);
@@ -895,6 +896,11 @@ function destroyActiveVideo() {
     youtubeOverlayTimer = null;
   }
 
+  if (playerControlsHideTimer) {
+    clearTimeout(playerControlsHideTimer);
+    playerControlsHideTimer = null;
+  }
+
   if (activeVideoElement) {
     activeVideoElement.pause();
     activeVideoElement = null;
@@ -918,22 +924,156 @@ async function leaveActiveVideo() {
   destroyActiveVideo();
 }
 
+
+function playIconSvg() {
+  return `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M8 5.5v13l11-6.5-11-6.5z" fill="currentColor"></path>
+    </svg>
+  `;
+}
+
+function pauseIconSvg() {
+  return `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M7 5h4v14H7zM13 5h4v14h-4z" fill="currentColor"></path>
+    </svg>
+  `;
+}
+
+function fullscreenEnterIconSvg() {
+  return `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      ></path>
+    </svg>
+  `;
+}
+
+function fullscreenExitIconSvg() {
+  return `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        d="M9 4v5H4M20 9h-5V4M15 20v-5h5M4 15h5v5"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      ></path>
+    </svg>
+  `;
+}
+
+function showPlayerControls() {
+  const player = $("customVideoPlayer");
+  if (!player) return;
+
+  player.classList.remove("controls-hidden");
+  player.classList.add("controls-visible");
+
+  if (playerControlsHideTimer) {
+    clearTimeout(playerControlsHideTimer);
+  }
+
+  playerControlsHideTimer = setTimeout(() => {
+    if (!$("customVideoPlayer")) return;
+
+    const playing =
+      activeVideoElement
+        ? !activeVideoElement.paused && !activeVideoElement.ended
+        : activeVideoPlayer &&
+          typeof activeVideoPlayer.getPlayerState === "function" &&
+          activeVideoPlayer.getPlayerState() === window.YT?.PlayerState?.PLAYING;
+
+    if (playing) {
+      player.classList.add("controls-hidden");
+      player.classList.remove("controls-visible");
+    }
+  }, 3000);
+}
+
+function updateFullscreenButton() {
+  const button = $("videoFullscreen");
+  const player = $("customVideoPlayer");
+  if (!button || !player) return;
+
+  const isFullscreen = document.fullscreenElement === player;
+
+  button.innerHTML = isFullscreen
+    ? fullscreenExitIconSvg()
+    : fullscreenEnterIconSvg();
+
+  button.setAttribute(
+    "aria-label",
+    isFullscreen ? "Esci da schermo intero" : "Schermo intero"
+  );
+
+  button.title = isFullscreen
+    ? "Esci da schermo intero"
+    : "Schermo intero";
+}
+
+async function togglePlayerFullscreen() {
+  const player = $("customVideoPlayer");
+  if (!player) return;
+
+  try {
+    if (document.fullscreenElement === player) {
+      await document.exitFullscreen();
+    } else {
+      await player.requestFullscreen();
+    }
+  } catch (error) {
+    console.warn("Fullscreen non disponibile:", error);
+  }
+}
+
+function seekRelative(seconds, getCurrentTime, getDuration, seek) {
+  const duration = Math.max(0, Number(getDuration()) || 0);
+  const current = Math.max(0, Number(getCurrentTime()) || 0);
+  const target = Math.min(duration || Infinity, Math.max(0, current + seconds));
+  seek(target);
+  showPlayerControls();
+}
+
 function updateCustomPlayerControls(current, duration, playing) {
   const playButton = $("videoPlayPause");
   const range = $("videoSeek");
   const time = $("videoTime");
 
   if (playButton) {
-    playButton.textContent = playing ? "❚❚" : "▶";
+    playButton.innerHTML = playing
+      ? pauseIconSvg()
+      : playIconSvg();
+
     playButton.setAttribute(
       "aria-label",
       playing ? "Pausa" : "Riproduci"
     );
+
+    playButton.title = playing ? "Pausa" : "Riproduci";
   }
 
   if (range && duration > 0 && document.activeElement !== range) {
     range.max = String(Math.floor(duration));
     range.value = String(Math.floor(current));
+
+    const percentage = Math.max(
+      0,
+      Math.min(100, (current / duration) * 100)
+    );
+
+    range.style.setProperty(
+      "--video-progress",
+      `${percentage}%`
+    );
   }
 
   if (time) {
@@ -954,27 +1094,117 @@ function bindCustomPlayerControls({
   const range = $("videoSeek");
   const fullscreenButton = $("videoFullscreen");
   const playerWrap = $("customVideoPlayer");
+  const videoMount = $("videoMount");
+  const seekPreview = $("videoSeekPreview");
 
-  playButton.onclick = () => {
+  const togglePlayback = () => {
     if (isPlaying()) pause();
     else play();
+    showPlayerControls();
   };
+
+  playButton.onclick = togglePlayback;
 
   range.oninput = () => {
-    seek(Number(range.value) || 0);
+    const seconds = Number(range.value) || 0;
+    seek(seconds);
+    updateCustomPlayerControls(
+      seconds,
+      getDuration(),
+      isPlaying()
+    );
   };
 
-  fullscreenButton.onclick = async () => {
-    try {
-      if (!document.fullscreenElement) {
-        await playerWrap.requestFullscreen();
-      } else {
-        await document.exitFullscreen();
-      }
-    } catch (error) {
-      console.warn("Fullscreen non disponibile:", error);
+  range.onpointermove = (event) => {
+    const duration = Number(getDuration()) || 0;
+    if (!duration) return;
+
+    const rect = range.getBoundingClientRect();
+    const ratio = Math.max(
+      0,
+      Math.min(1, (event.clientX - rect.left) / rect.width)
+    );
+    const seconds = ratio * duration;
+
+    seekPreview.textContent = formatVideoTime(seconds);
+    seekPreview.style.left = `${ratio * 100}%`;
+    seekPreview.classList.remove("hidden");
+  };
+
+  range.onpointerleave = () => {
+    seekPreview.classList.add("hidden");
+  };
+
+  fullscreenButton.onclick = togglePlayerFullscreen;
+
+  playerWrap.addEventListener("mousemove", showPlayerControls);
+  playerWrap.addEventListener("pointerdown", showPlayerControls);
+  playerWrap.addEventListener("touchstart", showPlayerControls, {
+    passive: true
+  });
+
+  videoMount.addEventListener("click", (event) => {
+    const youtubeBlockerActive =
+      Boolean($("youtubeInteractionBlocker"));
+    const isNative = Boolean(activeVideoElement);
+
+    if (isNative || youtubeBlockerActive) {
+      event.preventDefault();
+      togglePlayback();
+    }
+  });
+
+  videoMount.addEventListener("dblclick", async (event) => {
+    const youtubeBlockerActive =
+      Boolean($("youtubeInteractionBlocker"));
+    const isNative = Boolean(activeVideoElement);
+
+    if (isNative || youtubeBlockerActive) {
+      event.preventDefault();
+      await togglePlayerFullscreen();
+    }
+  });
+
+  const keyHandler = (event) => {
+    if (!$("customVideoPlayer")) {
+      document.removeEventListener("keydown", keyHandler);
+      return;
+    }
+
+    const tagName = event.target?.tagName?.toLowerCase();
+
+    if (
+      tagName === "input" ||
+      tagName === "textarea" ||
+      tagName === "select"
+    ) {
+      return;
+    }
+
+    if (event.code === "Space") {
+      event.preventDefault();
+      togglePlayback();
+    } else if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      seekRelative(-10, getCurrentTime, getDuration, seek);
+    } else if (event.key === "ArrowRight") {
+      event.preventDefault();
+      seekRelative(10, getCurrentTime, getDuration, seek);
+    } else if (event.key.toLowerCase() === "f") {
+      event.preventDefault();
+      togglePlayerFullscreen();
     }
   };
+
+  document.addEventListener("keydown", keyHandler);
+
+  document.addEventListener("fullscreenchange", () => {
+    updateFullscreenButton();
+    showPlayerControls();
+  });
+
+  updateFullscreenButton();
+  showPlayerControls();
 
   stopVideoProgressTimer();
   activeVideoProgressTimer = setInterval(async () => {
@@ -994,7 +1224,7 @@ function bindCustomPlayerControls({
         duration
       );
     }
-  }, 5000);
+  }, 1000);
 }
 
 function renderVideoPlayerShell(content) {
@@ -1006,7 +1236,11 @@ function renderVideoPlayerShell(content) {
       <p class="subtle">${esc(content.description || "")}</p>
     </div>
 
-    <div id="customVideoPlayer" class="custom-video-player">
+    <div
+      id="customVideoPlayer"
+      class="custom-video-player controls-visible"
+      tabindex="0"
+    >
       <div id="videoMount" class="video-mount"></div>
 
       <div class="custom-video-controls">
@@ -1015,20 +1249,30 @@ function renderVideoPlayerShell(content) {
           class="video-control-button"
           type="button"
           aria-label="Riproduci"
+          title="Riproduci"
         >
-          ▶
+          ${playIconSvg()}
         </button>
 
-        <input
-          id="videoSeek"
-          class="video-seek"
-          type="range"
-          min="0"
-          max="0"
-          value="0"
-          step="1"
-          aria-label="Posizione video"
-        >
+        <div class="video-seek-wrap">
+          <div
+            id="videoSeekPreview"
+            class="video-seek-preview hidden"
+          >
+            0:00
+          </div>
+
+          <input
+            id="videoSeek"
+            class="video-seek"
+            type="range"
+            min="0"
+            max="0"
+            value="0"
+            step="1"
+            aria-label="Posizione video"
+          >
+        </div>
 
         <span id="videoTime" class="video-time">0:00 / 0:00</span>
 
@@ -1037,11 +1281,16 @@ function renderVideoPlayerShell(content) {
           class="video-control-button"
           type="button"
           aria-label="Schermo intero"
+          title="Schermo intero"
         >
-          ⛶
+          ${fullscreenEnterIconSvg()}
         </button>
       </div>
     </div>
+
+    <p class="video-shortcuts">
+      Spazio: play/pausa · ←/→: 10 secondi · F: schermo intero
+    </p>
 
     <p class="video-provider-note">
       Riproduzione incorporata. Alcuni elementi identificativi possono essere
