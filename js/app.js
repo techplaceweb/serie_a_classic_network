@@ -1062,19 +1062,17 @@ async function startYouTubePlayback(content, videoId, startSeconds) {
   $("videoMount").classList.add("youtube-mode");
   $("videoMount").innerHTML = `
     <div id="youtubePlayerMount" class="youtube-player-frame"></div>
-    <div
-      id="youtubeInteractionBlocker"
-      class="youtube-interaction-blocker disabled"
-      aria-hidden="true"
-      title=""
-    ></div>
   `;
 
   youtubeOverlayTimer = setTimeout(() => {
-    const blocker = $("youtubeInteractionBlocker");
+    const mount = $("videoMount");
 
-    if (blocker) {
-      blocker.classList.remove("disabled");
+    if (mount && !$("youtubeInteractionBlocker")) {
+      const blocker = document.createElement("div");
+      blocker.id = "youtubeInteractionBlocker";
+      blocker.className = "youtube-interaction-blocker";
+      blocker.setAttribute("aria-hidden", "true");
+      mount.appendChild(blocker);
     }
 
     youtubeOverlayTimer = null;
