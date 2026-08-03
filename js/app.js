@@ -891,6 +891,13 @@ async function persistActiveVideoProgress() {
 function destroyActiveVideo() {
   stopVideoProgressTimer();
 
+  const player = $("customVideoPlayer");
+  if (player) {
+    player.classList.remove("mobile-fullscreen");
+  }
+
+  document.body.classList.remove("video-fullscreen-open");
+
   if (youtubeOverlayTimer) {
     clearTimeout(youtubeOverlayTimer);
     youtubeOverlayTimer = null;
@@ -1004,7 +1011,10 @@ function updateFullscreenButton() {
   const player = $("customVideoPlayer");
   if (!button || !player) return;
 
-  const isFullscreen = document.fullscreenElement === player;
+  const isFullscreen =
+    document.fullscreenElement === player ||
+    document.webkitFullscreenElement === player ||
+    player.classList.contains("mobile-fullscreen");
 
   button.innerHTML = isFullscreen
     ? fullscreenExitIconSvg()
@@ -1024,14 +1034,59 @@ async function togglePlayerFullscreen() {
   const player = $("customVideoPlayer");
   if (!player) return;
 
+  const pseudoFullscreen =
+    player.classList.contains("mobile-fullscreen");
+
   try {
-    if (document.fullscreenElement === player) {
-      await document.exitFullscreen();
-    } else {
-      await player.requestFullscreen();
+    if (
+      document.fullscreenElement === player ||
+      document.webkitFullscreenElement === player
+    ) {
+      if (document.exitFullscreen) {
+        await document.exitFullscreen();
+      } else if (document.webkitExitFullscreen) {
+        document.webkitExitFullscreen();
+      }
+      return;
     }
+
+    if (pseudoFullscreen) {
+      player.classList.remove("mobile-fullscreen");
+      document.body.classList.remove("video-fullscreen-open");
+      updateFullscreenButton();
+      return;
+    }
+
+    if (player.requestFullscreen) {
+      await player.requestFullscreen();
+      return;
+    }
+
+    if (player.webkitRequestFullscreen) {
+      player.webkitRequestFullscreen();
+      return;
+    }
+
+    if (
+      activeVideoElement &&
+      typeof activeVideoElement.webkitEnterFullscreen === "function"
+    ) {
+      activeVideoElement.webkitEnterFullscreen();
+      return;
+    }
+
+    player.classList.add("mobile-fullscreen");
+    document.body.classList.add("video-fullscreen-open");
+    updateFullscreenButton();
   } catch (error) {
-    console.warn("Fullscreen non disponibile:", error);
+    console.warn(
+      "Fullscreen nativo non disponibile, attivo il fallback mobile:",
+      error
+    );
+
+    player.classList.add("mobile-fullscreen");
+    document.body.classList.add("video-fullscreen-open");
+    updateFullscreenButton();
   }
 }
 
@@ -2083,10 +2138,48 @@ $("frontMenuClose").onclick = closeFrontMobileMenu;
 $("frontMenuOverlay").onclick = closeFrontMobileMenu;
 $("mobileMenuBtn").onclick = openFrontMobileMenu;
 
-$("mobileSearchBtn").onclick = () => {
-  $("frontSearch").focus();
-  $("frontSearch").scrollIntoView({ behavior: "smooth", block: "center" });
-};
+function openMobileSearch() {
+  $("mobileSearchOverlay").classList.remove("hidden");
+  document.body.classList.add("menu-open");
+
+  setTimeout(() => {
+    $("mobileSearchInput").focus();
+  }, 50);
+}
+
+function closeMobileSearch() {
+  $("mobileSearchOverlay").classList.add("hidden");
+  document.body.classList.remove("menu-open");
+}
+
+function submitMobileSearch() {
+  const value = $("mobileSearchInput").value.trim();
+
+  if (!value) return;
+
+  $("frontSearch").value = value;
+  closeMobileSearch();
+
+  $("frontSearch").dispatchEvent(
+    new Event("input", { bubbles: true })
+  );
+
+  $("frontMain").scrollIntoView({
+    behavior: "smooth",
+    block: "start"
+  });
+}
+
+$("mobileSearchBtn").onclick = openMobileSearch;
+$("mobileSearchClose").onclick = closeMobileSearch;
+$("mobileSearchSubmit").onclick = submitMobileSearch;
+
+$("mobileSearchInput").addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    submitMobileSearch();
+  }
+});
 
 document.querySelectorAll(".nav button[data-view]").forEach((b) => b.onclick = () => switchAdminView(b.dataset.view));
 $("userSearch").oninput = renderUsers; $("userFilter").onchange = renderUsers;
@@ -2108,4 +2201,16 @@ document.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
   closeAdminMobileMenu();
   closeFrontMobileMenu();
+
+  if ($("mobileSearchOverlay")) {
+    closeMobileSearch();
+  }
+
+  const player = $("customVideoPlayer");
+
+  if (player?.classList.contains("mobile-fullscreen")) {
+    player.classList.remove("mobile-fullscreen");
+    document.body.classList.remove("video-fullscreen-open");
+    updateFullscreenButton();
+  }
 });
