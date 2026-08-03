@@ -1227,6 +1227,69 @@ function bindCustomPlayerControls({
   }, 1000);
 }
 
+
+function renderRecentAdditions(currentContentId) {
+  const grid = $("recentAdditionsGrid");
+  if (!grid) return;
+
+  const recent = availableContents()
+    .filter((item) => item.id !== currentContentId)
+    .sort(
+      (a, b) =>
+        new Date(b.created_at || b.updated_at || 0) -
+        new Date(a.created_at || a.updated_at || 0)
+    )
+    .slice(0, 4);
+
+  if (!recent.length) {
+    grid.innerHTML =
+      '<div class="empty">Nessun altro contenuto disponibile.</div>';
+    return;
+  }
+
+  grid.innerHTML = recent
+    .map(
+      (item) => `
+        <article
+          class="content-card recent-content-card"
+          data-content-id="${item.id}"
+          role="button"
+          tabindex="0"
+          aria-label="Apri ${esc(item.title)}"
+        >
+          <div
+            class="thumb"
+            style="background-image:url('${esc(item.cover || "")}')"
+          ></div>
+
+          <div class="content-body">
+            <h3>${esc(item.title)}</h3>
+            ${
+              item.description
+                ? `<p class="subtle">${esc(item.description)}</p>`
+                : ""
+            }
+          </div>
+        </article>
+      `
+    )
+    .join("");
+
+  grid.querySelectorAll(".recent-content-card").forEach((card) => {
+    const open = () =>
+      window.openFrontContent(card.dataset.contentId);
+
+    card.addEventListener("click", open);
+
+    card.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        open();
+      }
+    });
+  });
+}
+
 function renderVideoPlayerShell(content) {
   $("frontMain").innerHTML = `
     <button class="icon-btn" id="videoBackButton">← Indietro</button>
@@ -1292,11 +1355,22 @@ function renderVideoPlayerShell(content) {
       Spazio: play/pausa · ←/→: 10 secondi · F: schermo intero
     </p>
 
-    <p class="video-provider-note">
-      Riproduzione incorporata. Alcuni elementi identificativi possono essere
-      mostrati dal fornitore del video.
-    </p>
+    <section class="recent-additions-section">
+      <div class="recent-additions-head">
+        <div>
+          <span class="badge gold">AGGIUNTI DI RECENTE</span>
+          <h2>Altre aggiunte recenti</h2>
+        </div>
+      </div>
+
+      <div
+        id="recentAdditionsGrid"
+        class="front-grid recent-additions-grid"
+      ></div>
+    </section>
   `;
+
+  renderRecentAdditions(content.id);
 
   $("videoBackButton").onclick = async () => {
     await leaveActiveVideo();
