@@ -20,6 +20,7 @@ let activeVideoPlayer = null;
 let activeVideoElement = null;
 let activeVideoContentId = null;
 let activeVideoProgressTimer = null;
+let youtubeOverlayTimer = null;
 let youtubeApiPromise = null;
 
 const $ = (id) => document.getElementById(id);
@@ -889,6 +890,11 @@ async function persistActiveVideoProgress() {
 function destroyActiveVideo() {
   stopVideoProgressTimer();
 
+  if (youtubeOverlayTimer) {
+    clearTimeout(youtubeOverlayTimer);
+    youtubeOverlayTimer = null;
+  }
+
   if (activeVideoElement) {
     activeVideoElement.pause();
     activeVideoElement = null;
@@ -1057,11 +1063,22 @@ async function startYouTubePlayback(content, videoId, startSeconds) {
   $("videoMount").innerHTML = `
     <div id="youtubePlayerMount" class="youtube-player-frame"></div>
     <div
-      class="youtube-interaction-blocker"
+      id="youtubeInteractionBlocker"
+      class="youtube-interaction-blocker disabled"
       aria-hidden="true"
       title=""
     ></div>
   `;
+
+  youtubeOverlayTimer = setTimeout(() => {
+    const blocker = $("youtubeInteractionBlocker");
+
+    if (blocker) {
+      blocker.classList.remove("disabled");
+    }
+
+    youtubeOverlayTimer = null;
+  }, 20000);
 
   await loadYouTubeIframeApi();
 
@@ -1071,8 +1088,8 @@ async function startYouTubePlayback(content, videoId, startSeconds) {
     height: "100%",
     playerVars: {
       autoplay: 1,
-      controls: 0,
-      disablekb: 1,
+      controls: 1,
+      disablekb: 0,
       fs: 0,
       iv_load_policy: 3,
       playsinline: 1,
