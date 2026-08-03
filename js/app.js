@@ -1123,7 +1123,12 @@ async function startYouTubePlayback(content, videoId, startSeconds) {
             duration,
             true
           );
+
           updateCustomPlayerControls(0, duration, false);
+
+          setTimeout(() => {
+            openFrontContent(content.id);
+          }, 450);
         }
       }
     }
@@ -1188,6 +1193,10 @@ function startNativePlayback(content, url, startSeconds) {
       video.duration,
       true
     );
+
+    setTimeout(() => {
+      openFrontContent(content.id);
+    }, 450);
   };
 
   bindCustomPlayerControls({
