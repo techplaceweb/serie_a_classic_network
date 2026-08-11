@@ -3,7 +3,7 @@
 
 const db = window.supabaseClient;
 const state = {
-  users: [], categories: [], contents: [], plans: [], messages: [], activity: [], videoProgress: [], livePresence: [],
+  users: [], categories: [], contents: [], plans: [], messages: [], activity: [], videoProgress: [], livePresence: [], userSessions: [],
   settings: { maintenance: false, admin_email: "", expired_message: "" }
 };
 let sessionUser = null;
@@ -15,6 +15,10 @@ let activeChatRole = null;
 let audienceRefreshTimer = null;
 let audiencePresenceChannel = null;
 let audiencePresenceHeartbeat = null;
+let userSessionId = null;
+let userSessionHeartbeat = null;
+let userSessionLastTick = null;
+let userSessionActiveSeconds = 0;
 let activeChatUserId = null;
 let notificationAudioContext = null;
 let notificationSoundUnlocked = false;
@@ -264,11 +268,13 @@ async function loadCommonData() {
 }
 
 async function loadAdminData() {
-  const [usersRes, activityRes, messagesRes, progressRes] = await Promise.all([
+  const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const [usersRes, activityRes, messagesRes, progressRes, sessionsRes] = await Promise.all([
     db.from("profiles").select("*").eq("role", "user").order("updated_at", { ascending: false }),
     db.from("activity").select("*").order("created_at", { ascending: false }).limit(24),
     db.from("messages").select("*").order("created_at"),
-    db.from("video_progress").select("user_id, content_id, position_seconds, duration_seconds, completed, updated_at").order("updated_at", { ascending: false }).limit(1000)
+    db.from("video_progress").select("user_id, content_id, position_seconds, duration_seconds, completed, updated_at").order("updated_at", { ascending: false }).limit(1000),
+    db.from("user_sessions").select("id, user_id, username, started_at, last_seen_at, ended_at, active_seconds").gte("last_seen_at", since24h).order("last_seen_at", { ascending: false }).limit(2000)
   ]);
   if (usersRes.error) throw usersRes.error;
   if (activityRes.error) throw activityRes.error;
@@ -278,7 +284,9 @@ async function loadAdminData() {
   state.messages = messagesRes.data || [];
   // La dashboard continua a funzionare anche se la tabella analytics non è ancora accessibile.
   state.videoProgress = progressRes.error ? [] : (progressRes.data || []);
+  state.userSessions = sessionsRes.error ? [] : (sessionsRes.data || []);
 }
+
 
 async function refreshData() {
   await loadCommonData();
@@ -358,6 +366,7 @@ async function logout() {
   destroyActiveVideo();
   stopMessagesRealtime();
   stopAudiencePresence();
+  await stopUserSessionTracking();
   await db.auth.signOut();
   sessionUser = null;
   location.reload();
@@ -380,15 +389,21 @@ function startAudienceAutoRefresh() {
   if (audienceRefreshTimer) clearInterval(audienceRefreshTimer);
   audienceRefreshTimer = setInterval(async () => {
     if (sessionUser?.role !== "admin" || currentAdminView !== "dashboard" || document.hidden) return;
-    const { data, error } = await db
-      .from("video_progress")
-      .select("user_id, content_id, position_seconds, duration_seconds, completed, updated_at")
-      .order("updated_at", { ascending: false })
-      .limit(1000);
-    if (!error) {
-      state.videoProgress = data || [];
-      renderAudienceIntelligence();
-    }
+    const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const [progressRes, sessionsRes] = await Promise.all([
+      db.from("video_progress")
+        .select("user_id, content_id, position_seconds, duration_seconds, completed, updated_at")
+        .order("updated_at", { ascending: false })
+        .limit(1000),
+      db.from("user_sessions")
+        .select("id, user_id, username, started_at, last_seen_at, ended_at, active_seconds")
+        .gte("last_seen_at", since24h)
+        .order("last_seen_at", { ascending: false })
+        .limit(2000)
+    ]);
+    if (!progressRes.error) state.videoProgress = progressRes.data || [];
+    if (!sessionsRes.error) state.userSessions = sessionsRes.data || [];
+    renderAudienceIntelligence();
   }, 30000);
 }
 function showFrontend(user) {
@@ -400,6 +415,7 @@ function showFrontend(user) {
   showFrontHome();
   startMessagesRealtime();
   startAudiencePresence();
+  startUserSessionTracking();
 }
 function showMaintenance() {
   hideAll();
@@ -510,6 +526,7 @@ function renderAudienceIntelligence() {
   const ranking = buildContentRanking(progress);
   renderContentRanking(ranking);
   renderSmartInsights({ progress, watching, uniqueViewers, completionRate, ranking });
+  renderUsersLast24h();
 }
 
 function setText(id, value) {
@@ -594,6 +611,117 @@ function startAudiencePresence() {
     try { audiencePresenceChannel?.untrack(); } catch (_) {}
   });
 }
+
+function formatOnlineDuration(totalSeconds) {
+  const seconds = Math.max(0, Math.round(Number(totalSeconds || 0)));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest ? `${hours}h ${rest}m` : `${hours}h`;
+}
+
+function renderUsersLast24h() {
+  const wrap = $("aiUsers24h");
+  const count = $("aiUsers24hCount");
+  if (!wrap) return;
+
+  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+  const sessions = (state.userSessions || []).filter((row) => new Date(row.last_seen_at || row.started_at || 0).getTime() >= cutoff);
+  const users = new Map();
+
+  sessions.forEach((row) => {
+    const key = String(row.user_id || row.username || "unknown");
+    const current = users.get(key) || {
+      username: row.username || analyticsUserLabel(row),
+      seconds: 0,
+      lastSeen: 0,
+      logins: 0
+    };
+    current.seconds += Math.max(0, Number(row.active_seconds || 0));
+    current.lastSeen = Math.max(current.lastSeen, new Date(row.last_seen_at || row.ended_at || row.started_at || 0).getTime());
+    current.logins += 1;
+    users.set(key, current);
+  });
+
+  const rows = [...users.values()].sort((a, b) => b.lastSeen - a.lastSeen);
+  if (count) count.textContent = `${rows.length} utenti`;
+  wrap.className = rows.length ? "ai-users24h" : "empty compact-empty";
+  wrap.innerHTML = rows.length ? rows.map((row) => `
+    <div class="ai-user24h-row">
+      <div class="ai-live-avatar">${esc((row.username || "U").slice(0, 2).toUpperCase())}</div>
+      <div class="ai-row-copy">
+        <b>${esc(row.username || "Utente")}</b>
+        <small>Ultimo accesso ${new Date(row.lastSeen).toLocaleString("it-IT")} · ${row.logins} ${row.logins === 1 ? "sessione" : "sessioni"}</small>
+      </div>
+      <div class="ai-session-time"><small>Tempo online</small><strong>${formatOnlineDuration(row.seconds)}</strong></div>
+    </div>`).join("") : "Nessun accesso utente registrato nelle ultime 24 ore.";
+}
+
+async function writeUserSessionHeartbeat(force = false) {
+  if (!sessionUser || sessionUser.role !== "user" || !userSessionId) return;
+  const now = Date.now();
+  if (!userSessionLastTick) userSessionLastTick = now;
+
+  if (!document.hidden) {
+    const elapsed = Math.max(0, Math.min(60, Math.round((now - userSessionLastTick) / 1000)));
+    userSessionActiveSeconds += elapsed;
+  }
+  userSessionLastTick = now;
+
+  if (!force && document.hidden) return;
+  const { error } = await db.from("user_sessions").update({
+    last_seen_at: new Date(now).toISOString(),
+    active_seconds: userSessionActiveSeconds
+  }).eq("id", userSessionId).eq("user_id", sessionUser.id);
+  if (error) console.warn("Heartbeat sessione non salvato:", error.message || error);
+}
+
+async function startUserSessionTracking() {
+  if (!sessionUser || sessionUser.role !== "user" || userSessionId) return;
+  const id = crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const now = new Date().toISOString();
+  const { error } = await db.from("user_sessions").insert({
+    id,
+    user_id: sessionUser.id,
+    username: sessionUser.username || "Utente",
+    started_at: now,
+    last_seen_at: now,
+    active_seconds: 0
+  });
+  if (error) {
+    console.warn("Tracciamento sessione non disponibile. Esegui SUPABASE_SETUP.sql:", error.message || error);
+    return;
+  }
+  userSessionId = id;
+  userSessionActiveSeconds = 0;
+  userSessionLastTick = Date.now();
+  userSessionHeartbeat = setInterval(() => writeUserSessionHeartbeat(), 15000);
+}
+
+async function stopUserSessionTracking() {
+  if (userSessionHeartbeat) clearInterval(userSessionHeartbeat);
+  userSessionHeartbeat = null;
+  if (!userSessionId || !sessionUser || sessionUser.role !== "user") {
+    userSessionId = null;
+    return;
+  }
+  await writeUserSessionHeartbeat(true);
+  const now = new Date().toISOString();
+  try {
+    await db.from("user_sessions").update({ ended_at: now, last_seen_at: now, active_seconds: userSessionActiveSeconds }).eq("id", userSessionId).eq("user_id", sessionUser.id);
+  } catch (_) {}
+  userSessionId = null;
+  userSessionLastTick = null;
+  userSessionActiveSeconds = 0;
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (!sessionUser || sessionUser.role !== "user" || !userSessionId) return;
+  if (document.hidden) writeUserSessionHeartbeat(true);
+  else userSessionLastTick = Date.now();
+});
 
 function stopAudiencePresence() {
   if (audiencePresenceHeartbeat) clearInterval(audiencePresenceHeartbeat);
@@ -1970,6 +2098,7 @@ window.startContentPlayback = async (
 
 window.addEventListener("pagehide", () => {
   persistActiveVideoProgress();
+  writeUserSessionHeartbeat(true);
 });
 
 function normalizeVideoUrl(url) {
@@ -1989,8 +2118,8 @@ async function showFrontHome() {
   await leaveActiveVideo();
   closeFrontMobileMenu();
   activeFrontCategory = null; document.querySelectorAll(".front-side button").forEach((b) => b.classList.remove("active")); $("frontHomeBtn")?.classList.add("active");
-  const arr = availableContents(), latest = arr[0], heroStyle = latest?.cover ? ` style="background:linear-gradient(90deg,rgba(4,8,6,.92),rgba(4,8,6,.25)),url('${latest.cover.replace(/'/g, "%27")}') center/cover no-repeat"` : "";
-  $("frontMain").innerHTML = `<div class="hero"${heroStyle}>${latest ? `<div><span class="badge gold">In Evidenza</span><h1>${esc(latest.title)}</h1><p>${esc(latest.description || "")}</p><button class="btn" onclick="openFrontContent('${latest.id}')">GUARDA ORA</button></div>` : `<div><span class="badge gold">SERIE A CLASSIC</span><h1>Benvenuto ${esc(sessionUser.username)}</h1><p>Rivivi il calcio italiano della Golden Era.</p></div>`}</div><div class="section-head" style="margin-top:28px"><h2>Aggiunti di recente</h2></div>${arr.length ? frontCards(arr) : '<div class="empty">Nessun contenuto disponibile.</div>'}`;
+  const arr = availableContents(), recentArr = arr.slice(0, 8), latest = arr[0], heroStyle = latest?.cover ? ` style="background:linear-gradient(90deg,rgba(4,8,6,.92),rgba(4,8,6,.25)),url('${latest.cover.replace(/'/g, "%27")}') center/cover no-repeat"` : "";
+  $("frontMain").innerHTML = `<div class="hero"${heroStyle}>${latest ? `<div><span class="badge gold">In Evidenza</span><h1>${esc(latest.title)}</h1><p>${esc(latest.description || "")}</p><button class="btn" onclick="openFrontContent('${latest.id}')">GUARDA ORA</button></div>` : `<div><span class="badge gold">SERIE A CLASSIC</span><h1>Benvenuto ${esc(sessionUser.username)}</h1><p>Rivivi il calcio italiano della Golden Era.</p></div>`}</div><div class="section-head" style="margin-top:28px"><h2>Aggiunti di recente</h2></div>${recentArr.length ? frontCards(recentArr) : '<div class="empty">Nessun contenuto disponibile.</div>'}`;
 }
 window.showFrontHome = showFrontHome;
 window.toggleFrontChildren = (id, e) => { e?.stopPropagation(); document.querySelectorAll(`.child-cat[data-parent="${id}"]`).forEach((el) => el.classList.toggle("visible")); };
