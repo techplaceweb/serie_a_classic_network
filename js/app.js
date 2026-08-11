@@ -3,7 +3,7 @@
 
 const db = window.supabaseClient;
 const state = {
-  users: [], categories: [], contents: [], plans: [], messages: [], activity: [], videoProgress: [], livePresence: [], userSessions: [],
+  users: [], categories: [], contents: [], plans: [], messages: [], activity: [], videoProgress: [], livePresence: [], userSessions: [], contentViewEvents: [],
   settings: { maintenance: false, admin_email: "", expired_message: "" }
 };
 let sessionUser = null;
@@ -268,13 +268,16 @@ async function loadCommonData() {
 }
 
 async function loadAdminData() {
-  const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-  const [usersRes, activityRes, messagesRes, progressRes, sessionsRes] = await Promise.all([
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const todayStartIso = todayStart.toISOString();
+  const [usersRes, activityRes, messagesRes, progressRes, sessionsRes, viewsRes] = await Promise.all([
     db.from("profiles").select("*").eq("role", "user").order("updated_at", { ascending: false }),
     db.from("activity").select("*").order("created_at", { ascending: false }).limit(24),
     db.from("messages").select("*").order("created_at"),
     db.from("video_progress").select("user_id, content_id, position_seconds, duration_seconds, completed, updated_at").order("updated_at", { ascending: false }).limit(1000),
-    db.from("user_sessions").select("id, user_id, username, started_at, last_seen_at, ended_at, active_seconds").gte("last_seen_at", since24h).order("last_seen_at", { ascending: false }).limit(2000)
+    db.from("user_sessions").select("id, user_id, username, started_at, last_seen_at, ended_at, active_seconds").gte("last_seen_at", todayStartIso).order("last_seen_at", { ascending: false }).limit(2000),
+    db.from("content_view_events").select("id, user_id, username, content_id, viewed_at").gte("viewed_at", todayStartIso).order("viewed_at", { ascending: false }).limit(5000)
   ]);
   if (usersRes.error) throw usersRes.error;
   if (activityRes.error) throw activityRes.error;
@@ -285,6 +288,7 @@ async function loadAdminData() {
   // La dashboard continua a funzionare anche se la tabella analytics non è ancora accessibile.
   state.videoProgress = progressRes.error ? [] : (progressRes.data || []);
   state.userSessions = sessionsRes.error ? [] : (sessionsRes.data || []);
+  state.contentViewEvents = viewsRes.error ? [] : (viewsRes.data || []);
 }
 
 
@@ -389,20 +393,28 @@ function startAudienceAutoRefresh() {
   if (audienceRefreshTimer) clearInterval(audienceRefreshTimer);
   audienceRefreshTimer = setInterval(async () => {
     if (sessionUser?.role !== "admin" || currentAdminView !== "dashboard" || document.hidden) return;
-    const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    const [progressRes, sessionsRes] = await Promise.all([
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayStartIso = todayStart.toISOString();
+    const [progressRes, sessionsRes, viewsRes] = await Promise.all([
       db.from("video_progress")
         .select("user_id, content_id, position_seconds, duration_seconds, completed, updated_at")
         .order("updated_at", { ascending: false })
         .limit(1000),
       db.from("user_sessions")
         .select("id, user_id, username, started_at, last_seen_at, ended_at, active_seconds")
-        .gte("last_seen_at", since24h)
+        .gte("last_seen_at", todayStartIso)
         .order("last_seen_at", { ascending: false })
-        .limit(2000)
+        .limit(2000),
+      db.from("content_view_events")
+        .select("id, user_id, username, content_id, viewed_at")
+        .gte("viewed_at", todayStartIso)
+        .order("viewed_at", { ascending: false })
+        .limit(5000)
     ]);
     if (!progressRes.error) state.videoProgress = progressRes.data || [];
     if (!sessionsRes.error) state.userSessions = sessionsRes.data || [];
+    if (!viewsRes.error) state.contentViewEvents = viewsRes.data || [];
     renderAudienceIntelligence();
   }, 30000);
 }
@@ -523,7 +535,7 @@ function renderAudienceIntelligence() {
 
   renderAudienceChart(progress, presence);
   renderNowWatching(watching, [...onlineUsers.values()]);
-  const ranking = buildContentRanking(progress);
+  const ranking = buildTodayContentRanking(state.contentViewEvents || []);
   renderContentRanking(ranking);
   renderSmartInsights({ progress, watching, uniqueViewers, completionRate, ranking });
   renderUsersLast24h();
@@ -622,22 +634,38 @@ function formatOnlineDuration(totalSeconds) {
   return rest ? `${hours}h ${rest}m` : `${hours}h`;
 }
 
+function relativeAccessTime(timestamp) {
+  const ms = Date.now() - Number(timestamp || 0);
+  if (!Number.isFinite(ms) || ms < 0) return "adesso";
+  const minutes = Math.floor(ms / 60000);
+  if (minutes < 1) return "adesso";
+  if (minutes < 60) return `${minutes} min fa`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} ${hours === 1 ? "ora" : "ore"} fa`;
+  return new Date(timestamp).toLocaleString("it-IT");
+}
+
 function renderUsersLast24h() {
   const wrap = $("aiUsers24h");
   const count = $("aiUsers24hCount");
   if (!wrap) return;
 
-  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const cutoff = todayStart.getTime();
   const sessions = (state.userSessions || []).filter((row) => new Date(row.last_seen_at || row.started_at || 0).getTime() >= cutoff);
+  const views = (state.contentViewEvents || []).filter((row) => new Date(row.viewed_at || 0).getTime() >= cutoff);
   const users = new Map();
 
   sessions.forEach((row) => {
     const key = String(row.user_id || row.username || "unknown");
     const current = users.get(key) || {
+      userId: row.user_id || null,
       username: row.username || analyticsUserLabel(row),
       seconds: 0,
       lastSeen: 0,
-      logins: 0
+      logins: 0,
+      contentIds: new Set()
     };
     current.seconds += Math.max(0, Number(row.active_seconds || 0));
     current.lastSeen = Math.max(current.lastSeen, new Date(row.last_seen_at || row.ended_at || row.started_at || 0).getTime());
@@ -645,18 +673,42 @@ function renderUsersLast24h() {
     users.set(key, current);
   });
 
+  views.forEach((row) => {
+    const key = String(row.user_id || row.username || "unknown");
+    const current = users.get(key) || {
+      userId: row.user_id || null,
+      username: row.username || analyticsUserLabel(row),
+      seconds: 0,
+      lastSeen: new Date(row.viewed_at || 0).getTime(),
+      logins: 0,
+      contentIds: new Set()
+    };
+    if (row.content_id) current.contentIds.add(String(row.content_id));
+    current.lastSeen = Math.max(current.lastSeen, new Date(row.viewed_at || 0).getTime());
+    users.set(key, current);
+  });
+
   const rows = [...users.values()].sort((a, b) => b.lastSeen - a.lastSeen);
-  if (count) count.textContent = `${rows.length} utenti`;
+  if (count) count.textContent = `${rows.length} utenti oggi`;
   wrap.className = rows.length ? "ai-users24h" : "empty compact-empty";
-  wrap.innerHTML = rows.length ? rows.map((row) => `
-    <div class="ai-user24h-row">
+  wrap.innerHTML = rows.length ? rows.map((row) => {
+    const watchedTitles = [...row.contentIds]
+      .map((id) => contentForAnalytics(id)?.title || "Contenuto non disponibile")
+      .filter(Boolean);
+    const watched = watchedTitles.length
+      ? watchedTitles.map((title) => `<span class="ai-watched-chip">${esc(title)}</span>`).join("")
+      : '<span class="ai-no-watch">Nessun contenuto avviato oggi</span>';
+    return `
+    <div class="ai-user24h-row ai-user-day-row">
       <div class="ai-live-avatar">${esc((row.username || "U").slice(0, 2).toUpperCase())}</div>
       <div class="ai-row-copy">
         <b>${esc(row.username || "Utente")}</b>
-        <small>Ultimo accesso ${new Date(row.lastSeen).toLocaleString("it-IT")} · ${row.logins} ${row.logins === 1 ? "sessione" : "sessioni"}</small>
+        <small>Ultimo accesso ${relativeAccessTime(row.lastSeen)} · ${row.logins} ${row.logins === 1 ? "accesso" : "accessi"} oggi</small>
+        <div class="ai-watched-list"><span class="ai-watched-label">Ha guardato:</span>${watched}</div>
       </div>
-      <div class="ai-session-time"><small>Tempo online</small><strong>${formatOnlineDuration(row.seconds)}</strong></div>
-    </div>`).join("") : "Nessun accesso utente registrato nelle ultime 24 ore.";
+      <div class="ai-session-time"><small>Durata oggi</small><strong>${formatOnlineDuration(row.seconds)}</strong></div>
+    </div>`;
+  }).join("") : "Nessun accesso utente registrato oggi.";
 }
 
 async function writeUserSessionHeartbeat(force = false) {
@@ -816,39 +868,36 @@ function renderNowWatching(watching, online = []) {
     </div>`;
   }).join("") : "Nessun utente online in questo momento.";
 }
-function buildContentRanking(progress) {
+function buildTodayContentRanking(events) {
   const map = new Map();
-  progress.forEach((item) => {
+  (events || []).forEach((item) => {
     const key = String(item.content_id || "");
     if (!key) return;
-    if (!map.has(key)) map.set(key, { contentId: key, sessions: 0, viewers: new Set(), totalRatio: 0, completed: 0, latest: 0 });
+    if (!map.has(key)) map.set(key, { contentId: key, viewers: new Set(), views: 0, latest: 0 });
     const row = map.get(key);
-    row.sessions += 1;
-    if (item.user_id) row.viewers.add(item.user_id);
-    const duration = Number(item.duration_seconds || 0);
-    row.totalRatio += item.completed ? 1 : (duration ? Math.min(1, Number(item.position_seconds || 0) / duration) : 0);
-    if (item.completed) row.completed += 1;
-    row.latest = Math.max(row.latest, new Date(item.updated_at || 0).getTime());
+    row.views += 1;
+    if (item.user_id) row.viewers.add(String(item.user_id));
+    row.latest = Math.max(row.latest, new Date(item.viewed_at || 0).getTime());
   });
   return [...map.values()].map((row) => ({
     ...row,
     uniqueViewers: row.viewers.size,
-    avgProgress: row.sessions ? Math.round(row.totalRatio / row.sessions * 100) : 0,
-    score: row.viewers.size * 4 + row.completed * 2 + row.totalRatio
-  })).sort((a, b) => b.score - a.score || b.latest - a.latest);
+    score: row.viewers.size
+  })).sort((a, b) => b.uniqueViewers - a.uniqueViewers || b.views - a.views || b.latest - a.latest);
 }
 
 function renderContentRanking(ranking) {
   const wrap = $("aiTopContents");
   if (!wrap) return;
   const rows = ranking.slice(0, 5);
-  const maxScore = Math.max(1, ...rows.map((row) => row.score));
+  const maxViewers = Math.max(1, ...rows.map((row) => row.uniqueViewers));
   wrap.className = rows.length ? "ai-ranking" : "ai-ranking empty compact-empty";
   wrap.innerHTML = rows.length ? rows.map((row, index) => {
     const content = contentForAnalytics(row.contentId);
-    const width = Math.max(8, Math.round(row.score / maxScore * 100));
-    return `<div class="ai-rank-row"><div class="ai-rank-num">${String(index + 1).padStart(2, "0")}</div><div class="ai-row-copy"><b>${esc(content?.title || "Contenuto non disponibile")}</b><small>${row.uniqueViewers} spettatori · ${row.avgProgress}% medio</small><div class="ai-progress"><i style="--w:${width}%"></i></div></div><div class="ai-row-value">${row.sessions}</div></div>`;
-  }).join("") : "Non ci sono ancora dati di visione.";
+    const width = Math.max(8, Math.round(row.uniqueViewers / maxViewers * 100));
+    const people = row.uniqueViewers === 1 ? "1 utente ha guardato questo contenuto" : `${row.uniqueViewers} utenti hanno guardato questo contenuto`;
+    return `<div class="ai-rank-row"><div class="ai-rank-num">${index + 1}</div><div class="ai-row-copy"><b>${esc(content?.title || "Contenuto non disponibile")}</b><small>${esc(people)} · ${row.views} ${row.views === 1 ? "avvio" : "avvii"} oggi</small><div class="ai-progress"><i style="--w:${width}%"></i></div></div><div class="ai-row-value">${row.uniqueViewers}</div></div>`;
+  }).join("") : "Nessuna visione registrata oggi.";
 }
 
 function renderSmartInsights({ progress, watching, uniqueViewers, completionRate, ranking }) {
@@ -858,7 +907,7 @@ function renderSmartInsights({ progress, watching, uniqueViewers, completionRate
   const top = ranking[0];
   if (top) {
     const content = contentForAnalytics(top.contentId);
-    insights.push({ icon: "↗", title: "Contenuto trainante", text: `${content?.title || "Il contenuto in testa"} guida l’interesse con ${top.uniqueViewers} spettatori unici e una progressione media del ${top.avgProgress}%.` });
+    insights.push({ icon: "↗", title: "Contenuto trainante oggi", text: `${content?.title || "Il contenuto in testa"} guida la giornata con ${top.uniqueViewers} ${top.uniqueViewers === 1 ? "spettatore unico" : "spettatori unici"}.` });
   }
   if (watching.length) {
     const liveIds = new Set(watching.map((item) => item.content_id));
@@ -2052,6 +2101,17 @@ function startNativePlayback(content, url, startSeconds) {
   });
 }
 
+async function recordContentView(contentId) {
+  if (!sessionUser || sessionUser.role !== "user" || !contentId) return;
+  const { error } = await db.from("content_view_events").insert({
+    user_id: sessionUser.id,
+    username: sessionUser.username || "Utente",
+    content_id: contentId,
+    viewed_at: new Date().toISOString()
+  });
+  if (error) console.warn("Registro visioni non disponibile. Esegui SUPABASE_SETUP.sql:", error.message || error);
+}
+
 window.startContentPlayback = async (
   contentId,
   startSeconds = 0
@@ -2063,6 +2123,8 @@ window.startContentPlayback = async (
   );
 
   if (!content) return;
+
+  await recordContentView(content.id);
 
   const youtubeId = extractYouTubeVideoId(content.url);
 
