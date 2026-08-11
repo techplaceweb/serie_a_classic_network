@@ -4,7 +4,8 @@
 const db = window.supabaseClient;
 const state = {
   users: [], categories: [], contents: [], plans: [], messages: [], activity: [], videoProgress: [], livePresence: [], userSessions: [], contentViewEvents: [],
-  settings: { maintenance: false, admin_email: "", expired_message: "" }
+  settings: { maintenance: false, admin_email: "", expired_message: "" },
+  analyticsErrors: []
 };
 let sessionUser = null;
 let currentAdminView = "dashboard";
@@ -285,10 +286,16 @@ async function loadAdminData() {
   state.users = usersRes.data || [];
   state.activity = activityRes.data || [];
   state.messages = messagesRes.data || [];
-  // La dashboard continua a funzionare anche se la tabella analytics non è ancora accessibile.
-  state.videoProgress = progressRes.error ? [] : (progressRes.data || []);
-  state.userSessions = sessionsRes.error ? [] : (sessionsRes.data || []);
-  state.contentViewEvents = viewsRes.error ? [] : (viewsRes.data || []);
+  state.analyticsErrors = [
+    progressRes.error && `video_progress: ${progressRes.error.message}`,
+    sessionsRes.error && `user_sessions: ${sessionsRes.error.message}`,
+    viewsRes.error && `content_view_events: ${viewsRes.error.message}`
+  ].filter(Boolean);
+  // Non cancellare i dati già caricati in caso di errore temporaneo: evita che gli insight spariscano.
+  if (!progressRes.error) state.videoProgress = progressRes.data || [];
+  if (!sessionsRes.error) state.userSessions = sessionsRes.data || [];
+  if (!viewsRes.error) state.contentViewEvents = viewsRes.data || [];
+  if (state.analyticsErrors.length) console.warn("Analytics admin non completamente disponibili:", state.analyticsErrors);
 }
 
 
@@ -389,34 +396,43 @@ function showAdmin() {
   startAudienceAutoRefresh();
 }
 
+async function refreshAdminDashboardData() {
+  if (sessionUser?.role !== "admin" || document.hidden) return;
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const todayStartIso = todayStart.toISOString();
+
+  const [usersRes, activityRes, progressRes, sessionsRes, viewsRes] = await Promise.all([
+    db.from("profiles").select("*").eq("role", "user").order("updated_at", { ascending: false }),
+    db.from("activity").select("*").order("created_at", { ascending: false }).limit(24),
+    db.from("video_progress").select("user_id, content_id, position_seconds, duration_seconds, completed, updated_at").order("updated_at", { ascending: false }).limit(1000),
+    db.from("user_sessions").select("id, user_id, username, started_at, last_seen_at, ended_at, active_seconds").gte("last_seen_at", todayStartIso).order("last_seen_at", { ascending: false }).limit(2000),
+    db.from("content_view_events").select("id, user_id, username, content_id, viewed_at").gte("viewed_at", todayStartIso).order("viewed_at", { ascending: false }).limit(5000)
+  ]);
+
+  if (!usersRes.error) state.users = usersRes.data || [];
+  if (!activityRes.error) state.activity = activityRes.data || [];
+  if (!progressRes.error) state.videoProgress = progressRes.data || [];
+  if (!sessionsRes.error) state.userSessions = sessionsRes.data || [];
+  if (!viewsRes.error) state.contentViewEvents = viewsRes.data || [];
+
+  state.analyticsErrors = [
+    progressRes.error && `video_progress: ${progressRes.error.message}`,
+    sessionsRes.error && `user_sessions: ${sessionsRes.error.message}`,
+    viewsRes.error && `content_view_events: ${viewsRes.error.message}`
+  ].filter(Boolean);
+
+  if (state.analyticsErrors.length) console.warn("Refresh analytics incompleto:", state.analyticsErrors);
+  renderStats();
+  renderActivity();
+  renderAudienceIntelligence();
+  renderUsers();
+}
+
 function startAudienceAutoRefresh() {
   if (audienceRefreshTimer) clearInterval(audienceRefreshTimer);
-  audienceRefreshTimer = setInterval(async () => {
-    if (sessionUser?.role !== "admin" || currentAdminView !== "dashboard" || document.hidden) return;
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
-    const todayStartIso = todayStart.toISOString();
-    const [progressRes, sessionsRes, viewsRes] = await Promise.all([
-      db.from("video_progress")
-        .select("user_id, content_id, position_seconds, duration_seconds, completed, updated_at")
-        .order("updated_at", { ascending: false })
-        .limit(1000),
-      db.from("user_sessions")
-        .select("id, user_id, username, started_at, last_seen_at, ended_at, active_seconds")
-        .gte("last_seen_at", todayStartIso)
-        .order("last_seen_at", { ascending: false })
-        .limit(2000),
-      db.from("content_view_events")
-        .select("id, user_id, username, content_id, viewed_at")
-        .gte("viewed_at", todayStartIso)
-        .order("viewed_at", { ascending: false })
-        .limit(5000)
-    ]);
-    if (!progressRes.error) state.videoProgress = progressRes.data || [];
-    if (!sessionsRes.error) state.userSessions = sessionsRes.data || [];
-    if (!viewsRes.error) state.contentViewEvents = viewsRes.data || [];
-    renderAudienceIntelligence();
-  }, 30000);
+  refreshAdminDashboardData();
+  audienceRefreshTimer = setInterval(refreshAdminDashboardData, 10000);
 }
 function showFrontend(user) {
   hideAll();
@@ -689,6 +705,12 @@ function renderUsersLast24h() {
   });
 
   const rows = [...users.values()].sort((a, b) => b.lastSeen - a.lastSeen);
+  if (state.analyticsErrors?.length) {
+    if (count) count.textContent = "CONFIG";
+    wrap.className = "empty compact-empty";
+    wrap.innerHTML = `Dati persistenti non disponibili. Esegui <b>SUPABASE_FIX_ANALYTICS.sql</b> nel SQL Editor di Supabase e ricarica la pagina.`;
+    return;
+  }
   if (count) count.textContent = `${rows.length} utenti oggi`;
   wrap.className = rows.length ? "ai-users24h" : "empty compact-empty";
   wrap.innerHTML = rows.length ? rows.map((row) => {
